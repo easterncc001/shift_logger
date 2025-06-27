@@ -1,0 +1,122 @@
+body {
+    background: #f4f7fa;
+    font-family: 'Times New Roman', Times, serif;
+    color: #2d3a4b;
+    margin: 0;
+}
+.container {
+    max-width: 400px;
+    margin: 40px auto;
+    background: #e9f0f7;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(44, 62, 80, 0.08);
+    padding: 32px 24px 24px 24px;
+    text-align: center;
+}
+.logo {
+    width: 100px;
+    margin-bottom: 12px;
+}
+h1 {
+    font-size: 2.2em;
+    margin-bottom: 18px;
+    color: #2d3a4b;
+}
+.time-select {
+    margin-bottom: 18px;
+    font-size: 1.2em;
+}
+.time-select select {
+    font-size: 1em;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid #b0c4de;
+    background: #f7fbff;
+    width: 320px;
+    max-width: 100%;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+}
+.actions button {
+    font-size: 1.1em;
+    margin: 6px 4px;
+    padding: 8px 18px;
+    border: none;
+    border-radius: 6px;
+    background: #6b8eb7;
+    color: #fff;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+.actions button:disabled {
+    background: #b0c4de;
+    color: #e9f0f7;
+    cursor: not-allowed;
+}
+#clockout-section {
+    margin-top: 12px;
+}
+#clockout-section input {
+    font-size: 1em;
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: 1px solid #b0c4de;
+    margin-right: 8px;
+}
+.code-box {
+    margin-top: 18px;
+    font-size: 1.2em;
+    background: #dbe7f5;
+    padding: 10px 0;
+    border-radius: 6px;
+}
+.code {
+    font-weight: bold;
+    color: #2d3a4b;
+}
+.flashes {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 12px 0;
+}
+.flashes li {
+    padding: 8px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    font-size: 1em;
+}
+.flashes .success {
+    background: #cbe7cb;
+    color: #225522;
+}
+.flashes .error {
+    background: #f7cccc;
+    color: #a33;
+}
+.job-site-select {
+    width: 320px;
+    max-width: 100%;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+    display: inline-block;
+}
+.export-section {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid #b0c4de;
+}
+.export-btn {
+    display: inline-block;
+    background: #28a745;
+    color: white;
+    text-decoration: none;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 0.9em;
+    transition: background 0.2s;
+}
+.export-btn:hover {
+    background: #218838;
+}
