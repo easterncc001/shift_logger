@@ -508,6 +508,15 @@ def qr_clock_out():
     flash(f"Successfully clocked out! Working time: <b>{format_seconds(working_time)}</b>", "success")
     return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], t=int(time.time())))
 
+@app.route('/add_subcontractor_column')
+def add_subcontractor_column():
+    try:
+        db.session.execute("ALTER TABLE shift ADD COLUMN subcontractor VARCHAR(120) NOT NULL DEFAULT '';")
+        db.session.commit()
+        return "Column added!"
+    except Exception as e:
+        return f"Error: {e}"
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
