@@ -212,6 +212,18 @@ def admin_logout():
     flash("Logged out.", "success")
     return redirect(url_for("admin_view"))
 
+@app.route("/admin/delete/<int:shift_id>", methods=["POST"])
+def admin_delete_shift(shift_id):
+    if not session.get("admin_authenticated"):
+        return redirect(url_for("admin_view"))
+    shift = Shift.query.get_or_404(shift_id)
+    # Delete associated breaks
+    Break.query.filter_by(shift_code=shift.code).delete()
+    db.session.delete(shift)
+    db.session.commit()
+    flash("Shift entry deleted.", "success")
+    return redirect(url_for("admin_view"))
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
