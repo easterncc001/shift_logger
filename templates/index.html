@@ -23,6 +23,14 @@
                 <input type="text" name="name" placeholder="Your Name" required>
             </div>
             <div class="input-group">
+                <input type="text" name="subcontractor" placeholder="Subcontractor Company" required list="subcontractor-list">
+                <datalist id="subcontractor-list">
+                    {% for subcontractor in subcontractors %}
+                    <option value="{{ subcontractor }}">
+                    {% endfor %}
+                </datalist>
+            </div>
+            <div class="input-group">
                 <select name="job_site" class="job-site-select" required>
                     <option value="">Select Job Site</option>
                     {% for site in job_sites %}
