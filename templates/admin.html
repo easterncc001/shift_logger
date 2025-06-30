@@ -150,8 +150,8 @@
                 <tr>
                     <td>{{ shift.name }}</td>
                     <td>{{ shift.job_site }}</td>
-                    <td>{{ shift.clock_in.strftime('%Y-%m-%d %I:%M %p') if shift.clock_in else '' }}</td>
-                    <td>{{ shift.clock_out.strftime('%Y-%m-%d %I:%M %p') if shift.clock_out else '' }}</td>
+                    <td>{{ format_time_for_display(shift.clock_in, shift.job_site) }}</td>
+                    <td>{{ format_time_for_display(shift.clock_out, shift.job_site) }}</td>
                     <td>{{ shift.total_time or '' }}</td>
                     <td>{{ shift.working_time or '' }}</td>
                     <td>{{ shift.breaks or '' }}</td>
