@@ -1,8 +1,13 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, session, Response
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import pytz
+import qrcode
+import io
+import base64
+import hashlib
+import time
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
@@ -63,6 +68,7 @@ def format_time_for_display(dt, job_site):
 class Shift(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), nullable=False)
+    subcontractor = db.Column(db.String(120), nullable=False)
     job_site = db.Column(db.String(255), nullable=False)
     clock_in = db.Column(db.DateTime, nullable=False)
     clock_out = db.Column(db.DateTime)
@@ -108,15 +114,27 @@ def index():
 
         if action == "clockin":
             name = request.form.get("name", "").strip()
+            subcontractor = request.form.get("subcontractor", "").strip()
             job_site = request.form.get("job_site", "")
+            
             if not name:
                 flash("Please enter your name.", "error")
+                return redirect(url_for("index"))
+            if not subcontractor:
+                flash("Please enter your subcontractor company.", "error")
                 return redirect(url_for("index"))
             if not job_site:
                 flash("Please select a job site.", "error")
                 return redirect(url_for("index"))
+            
+            # Check if already clocked in
+            existing_shift = Shift.query.filter_by(name=name, subcontractor=subcontractor, job_site=job_site, clock_out=None).first()
+            if existing_shift:
+                flash("You are already clocked in at this job site.", "error")
+                return redirect(url_for("index"))
+            
             code = generate_code()
-            shift = Shift(name=name, job_site=job_site, clock_in=now, code=code)
+            shift = Shift(name=name, subcontractor=subcontractor, job_site=job_site, clock_in=now, code=code)
             db.session.add(shift)
             db.session.commit()
             flash(
@@ -202,7 +220,15 @@ def index():
             flash("Invalid action or state.", "error")
             return redirect(url_for("index"))
 
-    return render_template("index.html", job_sites=JOB_SITES)
+    return render_template("index.html", job_sites=JOB_SITES, subcontractors=get_subcontractor_suggestions())
+
+def get_subcontractor_suggestions():
+    """Get list of existing subcontractors for auto-suggestions"""
+    try:
+        subcontractors = [row[0] for row in db.session.query(Shift.subcontractor).distinct().all()]
+        return [s for s in subcontractors if s]  # Filter out None/empty values
+    except Exception:
+        return []
 
 @app.route("/admin", methods=["GET", "POST"])
 def admin_view():
@@ -216,13 +242,54 @@ def admin_view():
                 return render_template("admin_login.html")
         else:
             return render_template("admin_login.html")
-    job_site_filter = request.args.get('job_site', '')
+    
+    subcontractor_filter = request.args.get('subcontractor', '')
     query = Shift.query
-    if job_site_filter:
-        query = query.filter_by(job_site=job_site_filter)
+    if subcontractor_filter:
+        query = query.filter_by(subcontractor=subcontractor_filter)
+    
     shifts = query.order_by(Shift.created_at.desc()).all()
-    job_sites = [row[0] for row in db.session.query(Shift.job_site).distinct().all()]
-    return render_template("admin.html", shifts=shifts, job_sites=job_sites, selected_site=job_site_filter, format_time_for_display=format_time_for_display)
+    subcontractors = [row[0] for row in db.session.query(Shift.subcontractor).distinct().all()]
+    
+    # Calculate days worked for each subcontractor
+    subcontractor_days = calculate_subcontractor_days()
+    
+    return render_template("admin.html", 
+                         shifts=shifts, 
+                         subcontractors=subcontractors, 
+                         selected_subcontractor=subcontractor_filter,
+                         subcontractor_days=subcontractor_days,
+                         format_time_for_display=format_time_for_display)
+
+def calculate_subcontractor_days():
+    """Calculate days worked for each subcontractor (8 hours = 1 day)"""
+    subcontractor_days = {}
+    
+    # Get all completed shifts
+    completed_shifts = Shift.query.filter(Shift.clock_out.isnot(None)).all()
+    
+    for shift in completed_shifts:
+        if not shift.working_time:
+            continue
+            
+        # Parse working time (format: "Xh Ym")
+        try:
+            time_parts = shift.working_time.split()
+            hours = int(time_parts[0].replace('h', ''))
+            minutes = int(time_parts[1].replace('m', '')) if len(time_parts) > 1 else 0
+            total_hours = hours + (minutes / 60)
+            
+            # Calculate days (8 hours = 1 day)
+            days = total_hours / 8
+            
+            if shift.subcontractor not in subcontractor_days:
+                subcontractor_days[shift.subcontractor] = 0
+            subcontractor_days[shift.subcontractor] += days
+            
+        except (ValueError, IndexError):
+            continue
+    
+    return subcontractor_days
 
 @app.route("/admin/export")
 def admin_export():
@@ -231,16 +298,27 @@ def admin_export():
     shifts = Shift.query.order_by(Shift.created_at.desc()).all()
     def generate():
         data = [
-            ["Name", "Job Site", "Clock In", "Clock Out", "Total Time", "Working Time", "Breaks", "Code"]
+            ["Name", "Subcontractor", "Job Site", "Working Time", "Days Worked", "Code"]
         ]
         for s in shifts:
+            # Calculate days worked
+            days_worked = 0
+            if s.working_time:
+                try:
+                    time_parts = s.working_time.split()
+                    hours = int(time_parts[0].replace('h', ''))
+                    minutes = int(time_parts[1].replace('m', '')) if len(time_parts) > 1 else 0
+                    total_hours = hours + (minutes / 60)
+                    days_worked = total_hours / 8
+                except (ValueError, IndexError):
+                    pass
+            
             data.append([
-                s.name, s.job_site,
-                format_time_for_display(s.clock_in, s.job_site),
-                format_time_for_display(s.clock_out, s.job_site),
-                s.total_time or '',
+                s.name, 
+                s.subcontractor,
+                s.job_site,
                 s.working_time or '',
-                s.breaks or '',
+                f"{days_worked:.2f}",
                 s.code
             ])
         output = ''
@@ -267,6 +345,23 @@ def admin_delete_shift(shift_id):
     flash("Shift entry deleted.", "success")
     return redirect(url_for("admin_view"))
 
+@app.route("/admin/qr_codes")
+def admin_qr_codes():
+    """Generate QR codes for all job sites"""
+    if not session.get("admin_authenticated"):
+        return redirect(url_for("admin_view"))
+    
+    qr_codes = {}
+    for job_site in JOB_SITES:
+        qr_image, timestamp = generate_qr_code(job_site)
+        qr_codes[job_site] = {
+            'image': qr_image,
+            'timestamp': timestamp,
+            'url': f"https://your-app.onrender.com/scan?site={hashlib.md5(job_site.encode()).hexdigest()[:8]}&t={timestamp}"
+        }
+    
+    return render_template("qr_codes.html", qr_codes=qr_codes)
+
 @app.route("/initdb")
 def init_db():
     try:
@@ -275,6 +370,143 @@ def init_db():
         return "Database tables created successfully!"
     except Exception as e:
         return f"Error creating tables: {str(e)}"
+
+def generate_qr_code(job_site, timestamp=None):
+    """Generate QR code for a job site with timestamp validation"""
+    if timestamp is None:
+        timestamp = int(time.time())
+    
+    # Create unique identifier for job site
+    site_id = hashlib.md5(job_site.encode()).hexdigest()[:8]
+    
+    # Create QR code data with timestamp
+    qr_data = f"https://your-app.onrender.com/scan?site={site_id}&t={timestamp}"
+    
+    # Generate QR code
+    qr = qrcode.QRCode(version=1, box_size=10, border=5)
+    qr.add_data(qr_data)
+    qr.make(fit=True)
+    
+    # Create image
+    img = qr.make_image(fill_color="black", back_color="white")
+    
+    # Convert to base64 for display
+    buffer = io.BytesIO()
+    img.save(buffer, format='PNG')
+    buffer.seek(0)
+    img_str = base64.b64encode(buffer.getvalue()).decode()
+    
+    return img_str, timestamp
+
+def validate_qr_timestamp(timestamp, max_age_hours=24):
+    """Validate QR code timestamp (prevent old QR codes)"""
+    try:
+        qr_time = int(timestamp)
+        current_time = int(time.time())
+        age_hours = (current_time - qr_time) / 3600
+        
+        return age_hours <= max_age_hours
+    except (ValueError, TypeError):
+        return False
+
+def get_job_site_from_id(site_id):
+    """Get job site name from site ID"""
+    for site in JOB_SITES:
+        if hashlib.md5(site.encode()).hexdigest()[:8] == site_id:
+            return site
+    return None
+
+@app.route("/scan")
+def qr_scan():
+    """Handle QR code scanning for clock in/out"""
+    site_id = request.args.get('site')
+    timestamp = request.args.get('t')
+    
+    # Validate timestamp
+    if not validate_qr_timestamp(timestamp):
+        return "QR code expired. Please get a new QR code.", 400
+    
+    # Get job site from ID
+    job_site = get_job_site_from_id(site_id)
+    if not job_site:
+        return "Invalid job site.", 400
+    
+    # Check if user is already clocked in at this site
+    # We'll need to identify the user somehow - for now, we'll use a simple approach
+    # In a real implementation, you might want user authentication
+    
+    return render_template("qr_scan.html", job_site=job_site)
+
+@app.route("/qr_clock_in", methods=["POST"])
+def qr_clock_in():
+    """Handle clock in via QR code"""
+    name = request.form.get("name", "").strip()
+    subcontractor = request.form.get("subcontractor", "").strip()
+    job_site = request.form.get("job_site", "")
+    
+    if not name or not subcontractor or not job_site:
+        flash("Please fill in all fields.", "error")
+        return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], t=int(time.time())))
+    
+    # Check if already clocked in
+    existing_shift = Shift.query.filter_by(name=name, subcontractor=subcontractor, job_site=job_site, clock_out=None).first()
+    if existing_shift:
+        flash("You are already clocked in at this job site.", "error")
+        return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], t=int(time.time())))
+    
+    # Clock in
+    now = datetime.now()
+    code = generate_code()
+    shift = Shift(name=name, subcontractor=subcontractor, job_site=job_site, clock_in=now, code=code)
+    db.session.add(shift)
+    db.session.commit()
+    
+    flash(f"Successfully clocked in! Your code is: <b>{code}</b>", "success")
+    return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], t=int(time.time())))
+
+@app.route("/qr_clock_out", methods=["POST"])
+def qr_clock_out():
+    """Handle clock out via QR code"""
+    code = request.form.get("code", "").strip()
+    job_site = request.form.get("job_site", "")
+    
+    if not code or not job_site:
+        flash("Please enter your code.", "error")
+        return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], t=int(time.time())))
+    
+    # Find shift
+    shift = Shift.query.filter_by(code=code, job_site=job_site, clock_out=None).first()
+    if not shift:
+        flash("Code not found or already clocked out.", "error")
+        return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], t=int(time.time())))
+    
+    # Clock out
+    now = datetime.now()
+    clock_in_dt = shift.clock_in
+    clock_out_dt = now
+    total_time = clock_out_dt - clock_in_dt
+    
+    # Calculate breaks
+    breaks = Break.query.filter_by(shift_code=code).all()
+    total_break = 0
+    breaks_str = ""
+    if breaks:
+        for b in breaks:
+            if b.start and b.end:
+                total_break += (b.end - b.start).total_seconds()
+        breaks_str = "; ".join(
+            f"{b.start.strftime('%I:%M %p')} - {b.end.strftime('%I:%M %p')}" for b in breaks if b.start and b.end
+        )
+    
+    working_time = total_time.total_seconds() - total_break
+    shift.clock_out = clock_out_dt
+    shift.total_time = format_seconds(total_time.total_seconds())
+    shift.working_time = format_seconds(working_time)
+    shift.breaks = breaks_str
+    db.session.commit()
+    
+    flash(f"Successfully clocked out! Working time: <b>{format_seconds(working_time)}</b>", "success")
+    return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], t=int(time.time())))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
