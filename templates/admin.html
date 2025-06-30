@@ -142,6 +142,7 @@
                     <th>Working Time</th>
                     <th>Breaks</th>
                     <th>Code</th>
+                    <th>Action</th>
                 </tr>
             </thead>
             <tbody>
@@ -155,6 +156,11 @@
                     <td>{{ shift.working_time or '' }}</td>
                     <td>{{ shift.breaks or '' }}</td>
                     <td>{{ shift.code }}</td>
+                    <td>
+                        <form method="post" action="{{ url_for('admin_delete_shift', shift_id=shift.id) }}" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this entry?');">
+                            <button type="submit" class="export-btn secondary" style="background:#a33;">Delete</button>
+                        </form>
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
