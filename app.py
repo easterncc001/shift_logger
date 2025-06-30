@@ -8,6 +8,7 @@ import io
 import base64
 import hashlib
 import time
+from sqlalchemy import text
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
@@ -511,7 +512,7 @@ def qr_clock_out():
 @app.route('/add_subcontractor_column')
 def add_subcontractor_column():
     try:
-        db.session.execute("ALTER TABLE shift ADD COLUMN subcontractor VARCHAR(120) NOT NULL DEFAULT '';")
+        db.session.execute(text("ALTER TABLE shift ADD COLUMN subcontractor VARCHAR(120) NOT NULL DEFAULT '';"))
         db.session.commit()
         return "Column added!"
     except Exception as e:
