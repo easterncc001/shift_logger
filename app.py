@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import os
+import pytz
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'
@@ -20,6 +21,44 @@ try:
         db.create_all()
 except Exception as e:
     print(f"Database initialization error: {e}")
+
+# Job site timezone mapping
+JOB_SITE_TIMEZONES = {
+    "2025 DC water - Washington DC 20032": "America/New_York",
+    "BRWRF Phase 3 Package 1 - Ashburn 20147": "America/New_York", 
+    "DC Water Projects - Washington DC 20032": "America/New_York",
+    "[HMMA] Stamp Shop Roof Improvement - Montgomery, Alabama 36105": "America/Chicago",
+    "Hyundai Product Center Office - Carnesville, Georgia": "America/New_York",
+    "JWA22 - Kokomo, Indiana 46901": "America/Indiana/Indianapolis",
+    "[KARR] Korean Ambassador's Residence Renovation, NW Washington 20016": "America/New_York",
+    "LGES-ALPHA Project-1F0 - Queen Creek 85140": "America/Phoenix",
+    "LGESMI2 EV Battery Plant Main BLDG - Holland Michigan 49423": "America/Detroit",
+    "TPO Roof Project - Fairfax 22030": "America/New_York"
+}
+
+def get_local_time(utc_time, job_site):
+    """Convert UTC time to local time based on job site"""
+    if not utc_time:
+        return None
+    
+    timezone_name = JOB_SITE_TIMEZONES.get(job_site, "UTC")
+    try:
+        tz = pytz.timezone(timezone_name)
+        # If utc_time is naive (no timezone), assume it's UTC
+        if utc_time.tzinfo is None:
+            utc_time = pytz.utc.localize(utc_time)
+        return utc_time.astimezone(tz)
+    except Exception:
+        return utc_time
+
+def format_time_for_display(dt, job_site):
+    """Format datetime for display in the appropriate timezone"""
+    if not dt:
+        return ""
+    local_time = get_local_time(dt, job_site)
+    if local_time:
+        return local_time.strftime('%Y-%m-%d %I:%M %p')
+    return dt.strftime('%Y-%m-%d %I:%M %p')
 
 class Shift(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -183,7 +222,7 @@ def admin_view():
         query = query.filter_by(job_site=job_site_filter)
     shifts = query.order_by(Shift.created_at.desc()).all()
     job_sites = [row[0] for row in db.session.query(Shift.job_site).distinct().all()]
-    return render_template("admin.html", shifts=shifts, job_sites=job_sites, selected_site=job_site_filter)
+    return render_template("admin.html", shifts=shifts, job_sites=job_sites, selected_site=job_site_filter, format_time_for_display=format_time_for_display)
 
 @app.route("/admin/export")
 def admin_export():
@@ -197,8 +236,8 @@ def admin_export():
         for s in shifts:
             data.append([
                 s.name, s.job_site,
-                s.clock_in.strftime('%Y-%m-%d %I:%M %p') if s.clock_in else '',
-                s.clock_out.strftime('%Y-%m-%d %I:%M %p') if s.clock_out else '',
+                format_time_for_display(s.clock_in, s.job_site),
+                format_time_for_display(s.clock_out, s.job_site),
                 s.total_time or '',
                 s.working_time or '',
                 s.breaks or '',
