@@ -1,17 +1,16 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
 from datetime import datetime
 import random
 import json
 import os
-import sqlite3
-from contextlib import contextmanager
+from openpyxl import Workbook, load_workbook
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'  # Change this to a random string
 
 SESSION_FILE = "web_session.json"
 LOG_FILE = "shift_log.txt"
-DATABASE_FILE = "shifts.db"
+EXCEL_FILE = "shifts.xlsx"
 
 JOB_SITES = [
     "2025 DC water - Washington DC 20032",
@@ -25,33 +24,6 @@ JOB_SITES = [
     "LGESMI2 EV Battery Plant Main BLDG - Holland Michigan 49423",
     "TPO Roof Project - Fairfax 22030"
 ]
-
-@contextmanager
-def get_db_connection():
-    conn = sqlite3.connect(DATABASE_FILE)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-def init_database():
-    with get_db_connection() as conn:
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS shifts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                job_site TEXT NOT NULL,
-                clock_in TEXT NOT NULL,
-                clock_out TEXT,
-                total_time TEXT,
-                working_time TEXT,
-                breaks TEXT,
-                code TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        conn.commit()
 
 def save_session_data(data):
     with open(SESSION_FILE, "w") as f:
@@ -76,22 +48,36 @@ def format_seconds(secs):
     minutes = int((secs % 3600) // 60)
     return f"{hours}h {minutes}m"
 
-def write_clockin_to_db(name, job_site, clock_in_dt, code):
-    with get_db_connection() as conn:
-        conn.execute('''
-            INSERT INTO shifts (name, job_site, clock_in, code)
-            VALUES (?, ?, ?, ?)
-        ''', (name, job_site, clock_in_dt.strftime('%Y-%m-%d %I:%M %p'), code))
-        conn.commit()
+def write_clockin_to_excel(name, job_site, clock_in_dt, code):
+    if not os.path.exists(EXCEL_FILE):
+        wb = Workbook()
+        ws = wb.active
+        ws.append([
+            "Name", "Job Site", "Clock In", "Clock Out", "Total Time", "Working Time", "Breaks", "Code"
+        ])
+        wb.save(EXCEL_FILE)
+    wb = load_workbook(EXCEL_FILE)
+    ws = wb.active
+    ws.append([
+        name,
+        job_site,
+        clock_in_dt.strftime('%Y-%m-%d %I:%M %p'),
+        "", "", "", "",  # clock out, total, working, breaks
+        code
+    ])
+    wb.save(EXCEL_FILE)
 
-def update_clockout_in_db(code, clock_out_dt, total_time, working_time, breaks_str):
-    with get_db_connection() as conn:
-        conn.execute('''
-            UPDATE shifts 
-            SET clock_out = ?, total_time = ?, working_time = ?, breaks = ?
-            WHERE code = ? AND clock_out IS NULL
-        ''', (clock_out_dt.strftime('%Y-%m-%d %I:%M %p'), total_time, working_time, breaks_str, code))
-        conn.commit()
+def update_clockout_in_excel(code, clock_out_dt, total_time, working_time, breaks_str):
+    wb = load_workbook(EXCEL_FILE)
+    ws = wb.active
+    for row in ws.iter_rows(min_row=2):  # skip header
+        if str(row[7].value) == str(code) and not row[3].value:
+            row[3].value = clock_out_dt.strftime('%Y-%m-%d %I:%M %p')
+            row[4].value = total_time
+            row[5].value = working_time
+            row[6].value = breaks_str
+            break
+    wb.save(EXCEL_FILE)
 
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -125,7 +111,7 @@ def index():
             on_break = False
             clock_in_time = now.isoformat()
             breaks = []
-            write_clockin_to_db(name, job_site, now, code)
+            write_clockin_to_excel(name, job_site, now, code)
             flash(
                 f"Your code is: <b>{code}</b><br>"
                 f"<span style='color:red;'>This code is required to clock out. Please write it down or remember it. It will not be shown again!</span>",
@@ -165,15 +151,15 @@ def index():
                 clock_out_dt = now
                 total_time = clock_out_dt - clock_in_dt
                 total_break = sum(
-                    (datetime.fromisoformat(b["end"]) - datetime.fromisoformat(b["start"])).total_seconds()
-                    for b in breaks if b["end"] is not None
+                    (datetime.fromisoformat(b["end"]) - datetime.fromisoformat(b["start"]))
+                    .total_seconds() for b in breaks if b["end"] is not None
                 )
                 working_time = total_time.total_seconds() - total_break
                 breaks_str = "; ".join(
                     f"{datetime.fromisoformat(b['start']).strftime('%I:%M %p')} - {datetime.fromisoformat(b['end']).strftime('%I:%M %p')}"
                     for b in breaks if b["end"] is not None
                 )
-                update_clockout_in_db(
+                update_clockout_in_excel(
                     code,
                     clock_out_dt,
                     format_seconds(total_time.total_seconds()),
@@ -220,127 +206,12 @@ def index():
                          name=name,
                          job_site=job_site)
 
-@app.route("/export")
-def export_data():
-    """Export shift data as CSV for download"""
-    with get_db_connection() as conn:
-        cursor = conn.execute('''
-            SELECT name, job_site, clock_in, clock_out, total_time, working_time, breaks, code
-            FROM shifts 
-            ORDER BY created_at DESC
-        ''')
-        rows = cursor.fetchall()
-    
-    csv_data = "Name,Job Site,Clock In,Clock Out,Total Time,Working Time,Breaks,Code\n"
-    for row in rows:
-        csv_data += f'"{row["name"]}","{row["job_site"]}","{row["clock_in"] or ""}","{row["clock_out"] or ""}","{row["total_time"] or ""}","{row["working_time"] or ""}","{row["breaks"] or ""}","{row["code"]}"\n'
-    
-    from flask import Response
-    return Response(
-        csv_data,
-        mimetype="text/csv",
-        headers={"Content-Disposition": "attachment;filename=shifts_export.csv"}
-    )
-
-@app.route("/export-by-site")
-def export_by_site():
-    """Export all job sites as separate CSV files in a zip"""
-    import zipfile
-    import io
-    from datetime import datetime
-    
-    # Get all unique job sites
-    with get_db_connection() as conn:
-        cursor = conn.execute('SELECT DISTINCT job_site FROM shifts ORDER BY job_site')
-        job_sites = [row['job_site'] for row in cursor.fetchall()]
-    
-    # Create zip file in memory
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-        for job_site in job_sites:
-            # Get data for this job site
-            with get_db_connection() as conn:
-                cursor = conn.execute('''
-                    SELECT name, job_site, clock_in, clock_out, total_time, working_time, breaks, code
-                    FROM shifts 
-                    WHERE job_site = ?
-                    ORDER BY created_at DESC
-                ''', (job_site,))
-                rows = cursor.fetchall()
-            
-            # Create CSV for this job site
-            csv_data = "Name,Job Site,Clock In,Clock Out,Total Time,Working Time,Breaks,Code\n"
-            for row in rows:
-                csv_data += f'"{row["name"]}","{row["job_site"]}","{row["clock_in"] or ""}","{row["clock_out"] or ""}","{row["total_time"] or ""}","{row["working_time"] or ""}","{row["breaks"] or ""}","{row["code"]}"\n'
-            
-            # Clean filename
-            safe_filename = "".join(c for c in job_site if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            safe_filename = safe_filename.replace(' ', '_')
-            zip_file.writestr(f"{safe_filename}.csv", csv_data)
-    
-    zip_buffer.seek(0)
-    
-    from flask import Response
-    return Response(
-        zip_buffer.getvalue(),
-        mimetype="application/zip",
-        headers={"Content-Disposition": f"attachment;filename=shifts_by_site_{datetime.now().strftime('%Y%m%d')}.zip"}
-    )
-
-@app.route("/export-site/<job_site>")
-def export_single_site(job_site):
-    """Export data for a specific job site"""
-    with get_db_connection() as conn:
-        cursor = conn.execute('''
-            SELECT name, job_site, clock_in, clock_out, total_time, working_time, breaks, code
-            FROM shifts 
-            WHERE job_site = ?
-            ORDER BY created_at DESC
-        ''', (job_site,))
-        rows = cursor.fetchall()
-    
-    csv_data = "Name,Job Site,Clock In,Clock Out,Total Time,Working Time,Breaks,Code\n"
-    for row in rows:
-        csv_data += f'"{row["name"]}","{row["job_site"]}","{row["clock_in"] or ""}","{row["clock_out"] or ""}","{row["total_time"] or ""}","{row["working_time"] or ""}","{row["breaks"] or ""}","{row["code"]}"\n'
-    
-    # Clean filename
-    safe_filename = "".join(c for c in job_site if c.isalnum() or c in (' ', '-', '_')).rstrip()
-    safe_filename = safe_filename.replace(' ', '_')
-    
-    from flask import Response
-    return Response(
-        csv_data,
-        mimetype="text/csv",
-        headers={"Content-Disposition": f"attachment;filename={safe_filename}_shifts.csv"}
-    )
-
-@app.route("/view-data")
-def view_data():
-    """View all shift data in a web table"""
-    job_site_filter = request.args.get('job_site', '')
-    
-    with get_db_connection() as conn:
-        if job_site_filter:
-            cursor = conn.execute('''
-                SELECT name, job_site, clock_in, clock_out, total_time, working_time, breaks, code, created_at
-                FROM shifts 
-                WHERE job_site = ?
-                ORDER BY created_at DESC
-            ''', (job_site_filter,))
-        else:
-            cursor = conn.execute('''
-                SELECT name, job_site, clock_in, clock_out, total_time, working_time, breaks, code, created_at
-                FROM shifts 
-                ORDER BY created_at DESC
-            ''')
-        rows = cursor.fetchall()
-        
-        # Get all job sites for filter dropdown
-        cursor = conn.execute('SELECT DISTINCT job_site FROM shifts ORDER BY job_site')
-        job_sites = [row['job_site'] for row in cursor.fetchall()]
-    
-    return render_template("view_data.html", shifts=rows, job_sites=job_sites, selected_site=job_site_filter)
+@app.route("/download-excel")
+def download_excel():
+    if not os.path.exists(EXCEL_FILE):
+        flash("No Excel file found.", "error")
+        return redirect(url_for("index"))
+    return send_file(EXCEL_FILE, as_attachment=True)
 
 if __name__ == "__main__":
-    init_database()
     app.run(debug=True)
