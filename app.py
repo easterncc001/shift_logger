@@ -24,6 +24,9 @@ JOB_SITES = [
     "TPO Roof Project - Fairfax 22030"
 ]
 
+# In-memory break tracking per code
+breaks_by_code = {}
+
 def log_event(event, dt, code=None):
     with open(LOG_FILE, "a") as f:
         code_str = f" [Code: {code}]" if code else ""
@@ -103,11 +106,44 @@ def index():
             code = generate_code()
             log_event("Clocked In", now, code)
             write_clockin_to_excel(name, job_site, now, code)
+            breaks_by_code[code] = []  # Initialize empty break list for this code
             flash(
                 f"Your code is: <b>{code}</b><br>"
                 f"<span style='color:red;'>This code is required to clock out. Please write it down or remember it. It will not be shown again!</span>",
                 "success"
             )
+            return redirect(url_for("index"))
+
+        elif action == "break":
+            input_code = request.form.get("input_code")
+            if not input_code:
+                flash("Please enter your code to start a break.", "error")
+                return redirect(url_for("index"))
+            if input_code not in breaks_by_code:
+                breaks_by_code[input_code] = []
+            # Start a new break (only if not already on break)
+            if not breaks_by_code[input_code] or breaks_by_code[input_code][-1].get("end") is not None:
+                breaks_by_code[input_code].append({"start": now.isoformat(), "end": None})
+                log_event("Break Start", now, input_code)
+                flash("Break started.", "success")
+            else:
+                flash("You are already on a break.", "error")
+            return redirect(url_for("index"))
+
+        elif action == "resume":
+            input_code = request.form.get("input_code")
+            if not input_code:
+                flash("Please enter your code to resume.", "error")
+                return redirect(url_for("index"))
+            if input_code in breaks_by_code and breaks_by_code[input_code]:
+                if breaks_by_code[input_code][-1]["end"] is None:
+                    breaks_by_code[input_code][-1]["end"] = now.isoformat()
+                    log_event("Break End", now, input_code)
+                    flash("Break ended.", "success")
+                else:
+                    flash("You are not currently on a break.", "error")
+            else:
+                flash("No break to resume.", "error")
             return redirect(url_for("index"))
 
         elif action == "clockout":
@@ -122,13 +158,24 @@ def index():
             if shift["clock_out"]:
                 flash("You have already clocked out for this shift.", "error")
                 return redirect(url_for("index"))
-            # Handle breaks (optional: could add break tracking by code)
             clock_in_dt = datetime.strptime(shift["clock_in"], '%Y-%m-%d %I:%M %p')
             clock_out_dt = now
             total_time = clock_out_dt - clock_in_dt
-            # For simplicity, no break tracking in this version
-            working_time = total_time.total_seconds()
+            # Calculate total break time
+            breaks = breaks_by_code.get(input_code, [])
+            total_break = 0
             breaks_str = ""
+            if breaks:
+                for b in breaks:
+                    if b.get("start") and b.get("end"):
+                        start = datetime.fromisoformat(b["start"])
+                        end = datetime.fromisoformat(b["end"])
+                        total_break += (end - start).total_seconds()
+                breaks_str = "; ".join(
+                    f"{datetime.fromisoformat(b['start']).strftime('%I:%M %p')} - {datetime.fromisoformat(b['end']).strftime('%I:%M %p')}"
+                    for b in breaks if b.get("start") and b.get("end")
+                )
+            working_time = total_time.total_seconds() - total_break
             update_clockout_in_excel(
                 input_code,
                 clock_out_dt,
@@ -137,6 +184,9 @@ def index():
                 breaks_str
             )
             log_event("Clocked Out", now, input_code)
+            # Remove break data for this code
+            if input_code in breaks_by_code:
+                del breaks_by_code[input_code]
             flash(
                 f"Shift complete!<br>"
                 f"Total time: <b>{format_seconds(total_time.total_seconds())}</b><br>"
