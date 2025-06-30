@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, render_template
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import os
@@ -35,7 +35,7 @@ class Break(db.Model):
 
 @app.route("/")
 def index():
-    return "Hello, world! Your Flask app is running."
+    return render_template("index.html")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
