@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>QR Codes - Shift Logger</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .qr-codes-container {
+            max-width: 1200px;
+            margin: 20px auto;
+            background: #e9f0f7;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(44, 62, 80, 0.08);
+            padding: 20px;
+        }
+        .qr-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .qr-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .qr-card h3 {
+            margin-top: 0;
+            color: #6b8eb7;
+            font-size: 1.1em;
+        }
+        .qr-image {
+            margin: 15px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .qr-url {
+            background: #f8f9fa;
+            padding: 8px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.8em;
+            word-break: break-all;
+            margin-top: 10px;
+        }
+        .back-btn {
+            display: inline-block;
+            background: #6b8eb7;
+            color: white;
+            text-decoration: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .back-btn:hover {
+            background: #5a7ba6;
+        }
+        .instructions {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="qr-codes-container">
+        <a href="{{ url_for('admin_view') }}" class="back-btn">← Back to Admin</a>
+        <h1>QR Codes for Job Sites</h1>
+        
+        <div class="instructions">
+            <h3>Instructions:</h3>
+            <ul style="text-align: left;">
+                <li>Print each QR code and place it at the entrance of the corresponding job site</li>
+                <li>Workers scan the QR code to clock in/out</li>
+                <li>QR codes expire after 24 hours for security</li>
+                <li>Generate new QR codes daily or as needed</li>
+            </ul>
+        </div>
+        
+        <div class="qr-grid">
+            {% for job_site, qr_data in qr_codes.items() %}
+            <div class="qr-card">
+                <h3>{{ job_site }}</h3>
+                <img src="data:image/png;base64,{{ qr_data.image }}" alt="QR Code for {{ job_site }}" class="qr-image">
+                <div class="qr-url">{{ qr_data.url }}</div>
+                <p style="font-size: 0.8em; color: #666; margin-top: 10px;">
+                    Generated: {{ qr_data.timestamp|datetime }}
+                </p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html> 
