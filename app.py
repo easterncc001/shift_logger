@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, session, Response
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import os
@@ -9,6 +9,8 @@ app.secret_key = 'your_secret_key'
 DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///shifts.db')
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+ADMIN_PASSWORD = "EasternCC001"
 
 db = SQLAlchemy(app)
 
@@ -159,9 +161,56 @@ def index():
 
     return render_template("index.html", job_sites=JOB_SITES)
 
-@app.route("/admin")
+@app.route("/admin", methods=["GET", "POST"])
 def admin_view():
-    return "Admin Data View (coming soon)"
+    if not session.get("admin_authenticated"):
+        if request.method == "POST":
+            password = request.form.get("password", "")
+            if password == ADMIN_PASSWORD:
+                session["admin_authenticated"] = True
+            else:
+                flash("Incorrect password.", "error")
+                return render_template("admin_login.html")
+        else:
+            return render_template("admin_login.html")
+    job_site_filter = request.args.get('job_site', '')
+    query = Shift.query
+    if job_site_filter:
+        query = query.filter_by(job_site=job_site_filter)
+    shifts = query.order_by(Shift.created_at.desc()).all()
+    job_sites = [row[0] for row in db.session.query(Shift.job_site).distinct().all()]
+    return render_template("admin.html", shifts=shifts, job_sites=job_sites, selected_site=job_site_filter)
+
+@app.route("/admin/export")
+def admin_export():
+    if not session.get("admin_authenticated"):
+        return redirect(url_for("admin_view"))
+    shifts = Shift.query.order_by(Shift.created_at.desc()).all()
+    def generate():
+        data = [
+            ["Name", "Job Site", "Clock In", "Clock Out", "Total Time", "Working Time", "Breaks", "Code"]
+        ]
+        for s in shifts:
+            data.append([
+                s.name, s.job_site,
+                s.clock_in.strftime('%Y-%m-%d %I:%M %p') if s.clock_in else '',
+                s.clock_out.strftime('%Y-%m-%d %I:%M %p') if s.clock_out else '',
+                s.total_time or '',
+                s.working_time or '',
+                s.breaks or '',
+                s.code
+            ])
+        output = ''
+        for row in data:
+            output += ','.join(f'"{str(cell)}"' for cell in row) + '\n'
+        return output
+    return Response(generate(), mimetype='text/csv', headers={"Content-Disposition": "attachment;filename=shifts_export.csv"})
+
+@app.route("/admin/logout")
+def admin_logout():
+    session.pop("admin_authenticated", None)
+    flash("Logged out.", "success")
+    return redirect(url_for("admin_view"))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
