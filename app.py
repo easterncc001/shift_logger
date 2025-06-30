@@ -37,6 +37,10 @@ class Break(db.Model):
 def index():
     return render_template("index.html")
 
+@app.route("/admin")
+def admin_view():
+    return "Admin Data View (coming soon)"
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
