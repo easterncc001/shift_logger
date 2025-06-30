@@ -87,7 +87,7 @@
                 <img src="data:image/png;base64,{{ qr_data.image }}" alt="QR Code for {{ job_site }}" class="qr-image">
                 <div class="qr-url">{{ qr_data.url }}</div>
                 <p style="font-size: 0.8em; color: #666; margin-top: 10px;">
-                    Generated: {{ qr_data.timestamp|datetime }}
+                    Generated: {{ qr_data.timestamp }}
                 </p>
             </div>
             {% endfor %}
