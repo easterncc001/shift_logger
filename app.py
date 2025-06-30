@@ -1,15 +1,36 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, Response, session
 from datetime import datetime
-import random
 import os
-from openpyxl import Workbook, load_workbook
+from flask_sqlalchemy import SQLAlchemy
+import csv
 
 app = Flask(__name__)
 app.secret_key = 'your_secret_key'  # Change this to a random string
 
-LOG_FILE = "shift_log.txt"
-EXCEL_FILE = "shifts.xlsx"
-EXCEL_DOWNLOAD_PASSWORD = "EasternCC001"  # Change this to your desired password
+# Database config
+DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///shifts.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
+
+class Shift(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    job_site = db.Column(db.String(255), nullable=False)
+    clock_in = db.Column(db.DateTime, nullable=False)
+    clock_out = db.Column(db.DateTime)
+    total_time = db.Column(db.String(32))
+    working_time = db.Column(db.String(32))
+    breaks = db.Column(db.String(255))
+    code = db.Column(db.String(16), unique=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class Break(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    shift_code = db.Column(db.String(16), db.ForeignKey('shift.code'), nullable=False)
+    start = db.Column(db.DateTime, nullable=False)
+    end = db.Column(db.DateTime)
 
 JOB_SITES = [
     "2025 DC water - Washington DC 20032",
@@ -24,15 +45,11 @@ JOB_SITES = [
     "TPO Roof Project - Fairfax 22030"
 ]
 
-# In-memory break tracking per code
-breaks_by_code = {}
-
-def log_event(event, dt, code=None):
-    with open(LOG_FILE, "a") as f:
-        code_str = f" [Code: {code}]" if code else ""
-        f.write(f"{dt.strftime('%Y-%m-%d %I:%M %p')} - {event}{code_str}\n")
+EXCEL_DOWNLOAD_PASSWORD = "EasternCC001"  # Change this to your desired password
+ADMIN_PASSWORD = "EasternCC001"  # Change this to your desired admin password
 
 def generate_code():
+    import random
     return str(random.randint(100000, 999999))
 
 def format_seconds(secs):
@@ -40,53 +57,9 @@ def format_seconds(secs):
     minutes = int((secs % 3600) // 60)
     return f"{hours}h {minutes}m"
 
-def write_clockin_to_excel(name, job_site, clock_in_dt, code):
-    if not os.path.exists(EXCEL_FILE):
-        wb = Workbook()
-        ws = wb.active
-        ws.append([
-            "Name", "Job Site", "Clock In", "Clock Out", "Total Time", "Working Time", "Breaks", "Code"
-        ])
-        wb.save(EXCEL_FILE)
-    wb = load_workbook(EXCEL_FILE)
-    ws = wb.active
-    ws.append([
-        name,
-        job_site,
-        clock_in_dt.strftime('%Y-%m-%d %I:%M %p'),
-        "", "", "", "",  # clock out, total, working, breaks
-        code
-    ])
-    wb.save(EXCEL_FILE)
-
-def update_clockout_in_excel(code, clock_out_dt, total_time, working_time, breaks_str):
-    wb = load_workbook(EXCEL_FILE)
-    ws = wb.active
-    for row in ws.iter_rows(min_row=2):  # skip header
-        if str(row[7].value) == str(code) and not row[3].value:
-            row[3].value = clock_out_dt.strftime('%Y-%m-%d %I:%M %p')
-            row[4].value = total_time
-            row[5].value = working_time
-            row[6].value = breaks_str
-            break
-    wb.save(EXCEL_FILE)
-
-def get_shift_by_code(code):
-    wb = load_workbook(EXCEL_FILE)
-    ws = wb.active
-    for row in ws.iter_rows(min_row=2):
-        if str(row[7].value) == str(code):
-            return {
-                "name": row[0].value,
-                "job_site": row[1].value,
-                "clock_in": row[2].value,
-                "clock_out": row[3].value,
-                "total_time": row[4].value,
-                "working_time": row[5].value,
-                "breaks": row[6].value,
-                "code": row[7].value
-            }
-    return None
+@app.before_first_request
+def create_tables():
+    db.create_all()
 
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -104,9 +77,9 @@ def index():
                 flash("Please select a job site.", "error")
                 return redirect(url_for("index"))
             code = generate_code()
-            log_event("Clocked In", now, code)
-            write_clockin_to_excel(name, job_site, now, code)
-            breaks_by_code[code] = []  # Initialize empty break list for this code
+            shift = Shift(name=name, job_site=job_site, clock_in=now, code=code)
+            db.session.add(shift)
+            db.session.commit()
             flash(
                 f"Your code is: <b>{code}</b><br>"
                 f"<span style='color:red;'>This code is required to clock out. Please write it down or remember it. It will not be shown again!</span>",
@@ -119,12 +92,16 @@ def index():
             if not input_code:
                 flash("Please enter your code to start a break.", "error")
                 return redirect(url_for("index"))
-            if input_code not in breaks_by_code:
-                breaks_by_code[input_code] = []
-            # Start a new break (only if not already on break)
-            if not breaks_by_code[input_code] or breaks_by_code[input_code][-1].get("end") is not None:
-                breaks_by_code[input_code].append({"start": now.isoformat(), "end": None})
-                log_event("Break Start", now, input_code)
+            shift = Shift.query.filter_by(code=input_code).first()
+            if not shift:
+                flash("Code not found.", "error")
+                return redirect(url_for("index"))
+            # Only start a new break if not already on break
+            last_break = Break.query.filter_by(shift_code=input_code).order_by(Break.id.desc()).first()
+            if not last_break or last_break.end is not None:
+                new_break = Break(shift_code=input_code, start=now)
+                db.session.add(new_break)
+                db.session.commit()
                 flash("Break started.", "success")
             else:
                 flash("You are already on a break.", "error")
@@ -135,13 +112,11 @@ def index():
             if not input_code:
                 flash("Please enter your code to resume.", "error")
                 return redirect(url_for("index"))
-            if input_code in breaks_by_code and breaks_by_code[input_code]:
-                if breaks_by_code[input_code][-1]["end"] is None:
-                    breaks_by_code[input_code][-1]["end"] = now.isoformat()
-                    log_event("Break End", now, input_code)
-                    flash("Break ended.", "success")
-                else:
-                    flash("You are not currently on a break.", "error")
+            last_break = Break.query.filter_by(shift_code=input_code).order_by(Break.id.desc()).first()
+            if last_break and last_break.end is None:
+                last_break.end = now
+                db.session.commit()
+                flash("Break ended.", "success")
             else:
                 flash("No break to resume.", "error")
             return redirect(url_for("index"))
@@ -151,42 +126,32 @@ def index():
             if not input_code:
                 flash("Please enter your code to clock out.", "error")
                 return redirect(url_for("index"))
-            shift = get_shift_by_code(input_code)
+            shift = Shift.query.filter_by(code=input_code).first()
             if not shift:
                 flash("Code not found. Please check your code.", "error")
                 return redirect(url_for("index"))
-            if shift["clock_out"]:
+            if shift.clock_out:
                 flash("You have already clocked out for this shift.", "error")
                 return redirect(url_for("index"))
-            clock_in_dt = datetime.strptime(shift["clock_in"], '%Y-%m-%d %I:%M %p')
+            clock_in_dt = shift.clock_in
             clock_out_dt = now
             total_time = clock_out_dt - clock_in_dt
-            # Calculate total break time
-            breaks = breaks_by_code.get(input_code, [])
+            breaks = Break.query.filter_by(shift_code=input_code).all()
             total_break = 0
             breaks_str = ""
             if breaks:
                 for b in breaks:
-                    if b.get("start") and b.get("end"):
-                        start = datetime.fromisoformat(b["start"])
-                        end = datetime.fromisoformat(b["end"])
-                        total_break += (end - start).total_seconds()
+                    if b.start and b.end:
+                        total_break += (b.end - b.start).total_seconds()
                 breaks_str = "; ".join(
-                    f"{datetime.fromisoformat(b['start']).strftime('%I:%M %p')} - {datetime.fromisoformat(b['end']).strftime('%I:%M %p')}"
-                    for b in breaks if b.get("start") and b.get("end")
+                    f"{b.start.strftime('%I:%M %p')} - {b.end.strftime('%I:%M %p')}" for b in breaks if b.start and b.end
                 )
             working_time = total_time.total_seconds() - total_break
-            update_clockout_in_excel(
-                input_code,
-                clock_out_dt,
-                format_seconds(total_time.total_seconds()),
-                format_seconds(working_time),
-                breaks_str
-            )
-            log_event("Clocked Out", now, input_code)
-            # Remove break data for this code
-            if input_code in breaks_by_code:
-                del breaks_by_code[input_code]
+            shift.clock_out = clock_out_dt
+            shift.total_time = format_seconds(total_time.total_seconds())
+            shift.working_time = format_seconds(working_time)
+            shift.breaks = breaks_str
+            db.session.commit()
             flash(
                 f"Shift complete!<br>"
                 f"Total time: <b>{format_seconds(total_time.total_seconds())}</b><br>"
@@ -201,15 +166,65 @@ def index():
 
     return render_template("index.html", job_sites=JOB_SITES)
 
+@app.route("/admin", methods=["GET", "POST"])
+def admin_view():
+    if not session.get("admin_authenticated"):
+        if request.method == "POST":
+            password = request.form.get("password", "")
+            if password == ADMIN_PASSWORD:
+                session["admin_authenticated"] = True
+            else:
+                flash("Incorrect password.", "error")
+                return render_template("admin_login.html")
+        else:
+            return render_template("admin_login.html")
+    job_site_filter = request.args.get('job_site', '')
+    query = Shift.query
+    if job_site_filter:
+        query = query.filter_by(job_site=job_site_filter)
+    shifts = query.order_by(Shift.created_at.desc()).all()
+    job_sites = [row[0] for row in db.session.query(Shift.job_site).distinct().all()]
+    return render_template("admin.html", shifts=shifts, job_sites=job_sites, selected_site=job_site_filter)
+
+@app.route("/admin/export")
+def admin_export():
+    if not session.get("admin_authenticated"):
+        return redirect(url_for("admin_view"))
+    shifts = Shift.query.order_by(Shift.created_at.desc()).all()
+    def generate():
+        data = [
+            ["Name", "Job Site", "Clock In", "Clock Out", "Total Time", "Working Time", "Breaks", "Code"]
+        ]
+        for s in shifts:
+            data.append([
+                s.name, s.job_site,
+                s.clock_in.strftime('%Y-%m-%d %I:%M %p') if s.clock_in else '',
+                s.clock_out.strftime('%Y-%m-%d %I:%M %p') if s.clock_out else '',
+                s.total_time or '',
+                s.working_time or '',
+                s.breaks or '',
+                s.code
+            ])
+        output = ''
+        for row in data:
+            output += ','.join(f'"{str(cell)}"' for cell in row) + '\n'
+        return output
+    return Response(generate(), mimetype='text/csv', headers={"Content-Disposition": "attachment;filename=shifts_export.csv"})
+
+@app.route("/admin/logout")
+def admin_logout():
+    session.pop("admin_authenticated", None)
+    flash("Logged out.", "success")
+    return redirect(url_for("admin_view"))
+
 @app.route("/download-excel", methods=["GET", "POST"])
 def download_excel():
+    # Deprecated in DB version, but keep for compatibility
     if request.method == "POST":
         password = request.form.get("password", "")
         if password == EXCEL_DOWNLOAD_PASSWORD:
-            if not os.path.exists(EXCEL_FILE):
-                flash("No Excel file found.", "error")
-                return redirect(url_for("index"))
-            return send_file(EXCEL_FILE, as_attachment=True)
+            flash("Excel download is not supported in the database version. Use the admin export instead.", "error")
+            return redirect(url_for("admin_view"))
         else:
             flash("Incorrect password.", "error")
             return render_template("download_excel.html")
