@@ -48,7 +48,6 @@ JOB_SITES = [
     "TPO Roof Project - Fairfax 22030"
 ]
 
-EXCEL_DOWNLOAD_PASSWORD = "EasternCC001"  # Change this to your desired password
 ADMIN_PASSWORD = "EasternCC001"  # Change this to your desired admin password
 
 def generate_code():
@@ -216,21 +215,6 @@ def admin_logout():
     flash("Logged out.", "success")
     return redirect(url_for("admin_view"))
 
-@app.route("/download-excel", methods=["GET", "POST"])
-def download_excel():
-    # Deprecated in DB version, but keep for compatibility
-    if request.method == "POST":
-        password = request.form.get("password", "")
-        if password == EXCEL_DOWNLOAD_PASSWORD:
-            flash("Excel download is not supported in the database version. Use the admin export instead.", "error")
-            return redirect(url_for("admin_view"))
-        else:
-            flash("Incorrect password.", "error")
-            return render_template("download_excel.html")
-    return render_template("download_excel.html")
-
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)
