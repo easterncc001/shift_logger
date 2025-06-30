@@ -158,13 +158,3 @@
                 </tr>
                 {% endfor %}
             </tbody>
-        </table>
-        {% if not shifts %}
-        <div style="text-align: center; padding: 40px; color: #6c757d;">
-            <h3>No shifts found</h3>
-            <p>{% if selected_site %}No shifts found for "{{ selected_site }}"{% else %}No shifts have been recorded yet{% endif %}</p>
-        </div>
-        {% endif %}
-    </div>
-</body>
-</html>
