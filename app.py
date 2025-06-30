@@ -14,6 +14,9 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
+with app.app_context():
+    db.create_all()
+
 class Shift(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), nullable=False)
@@ -56,10 +59,6 @@ def format_seconds(secs):
     hours = int(secs // 3600)
     minutes = int((secs % 3600) // 60)
     return f"{hours}h {minutes}m"
-
-@app.before_first_request
-def create_tables():
-    db.create_all()
 
 @app.route("/", methods=["GET", "POST"])
 def index():
