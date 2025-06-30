@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>QR Code Scan - Shift Logger</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .qr-container {
+            max-width: 600px;
+            margin: 20px auto;
+            background: #e9f0f7;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(44, 62, 80, 0.08);
+            padding: 20px;
+            text-align: center;
+        }
+        .job-site-info {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .form-section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        .form-section h3 {
+            margin-top: 0;
+            color: #6b8eb7;
+        }
+        .input-group {
+            margin-bottom: 15px;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #b0c4de;
+            border-radius: 6px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        .btn {
+            background: #6b8eb7;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        .btn:hover {
+            background: #5a7ba6;
+        }
+        .btn-success {
+            background: #28a745;
+        }
+        .btn-success:hover {
+            background: #218838;
+        }
+        .btn-danger {
+            background: #dc3545;
+        }
+        .btn-danger:hover {
+            background: #c82333;
+        }
+    </style>
+</head>
+<body>
+    <div class="qr-container">
+        <h1>Shift Logger - QR Code</h1>
+        
+        <div class="job-site-info">
+            <h2>{{ job_site }}</h2>
+            <p>Scan this QR code to clock in or out</p>
+        </div>
+        
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            <ul class="flashes">
+            {% for category, message in messages %}
+              <li class="{{ category }}">{{ message|safe }}</li>
+            {% endfor %}
+            </ul>
+          {% endif %}
+        {% endwith %}
+        
+        <!-- Clock In Form -->
+        <div class="form-section">
+            <h3>Clock In</h3>
+            <form method="post" action="{{ url_for('qr_clock_in') }}">
+                <input type="hidden" name="job_site" value="{{ job_site }}">
+                <div class="input-group">
+                    <input type="text" name="name" placeholder="Your Name" required>
+                </div>
+                <div class="input-group">
+                    <input type="text" name="subcontractor" placeholder="Subcontractor Company" required>
+                </div>
+                <button type="submit" class="btn btn-success">Clock In</button>
+            </form>
+        </div>
+        
+        <!-- Clock Out Form -->
+        <div class="form-section">
+            <h3>Clock Out</h3>
+            <form method="post" action="{{ url_for('qr_clock_out') }}">
+                <input type="hidden" name="job_site" value="{{ job_site }}">
+                <div class="input-group">
+                    <input type="text" name="code" placeholder="Enter your code" required>
+                </div>
+                <button type="submit" class="btn btn-danger">Clock Out</button>
+            </form>
+        </div>
+        
+        <div style="margin-top: 20px;">
+            <a href="{{ url_for('index') }}" class="btn">Back to Main Page</a>
+        </div>
+    </div>
+</body>
+</html> 
