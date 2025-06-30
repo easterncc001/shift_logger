@@ -19,38 +19,38 @@
           {% endif %}
         {% endwith %}
         <form method="post">
-            {% if not clocked_in %}
             <div class="input-group">
-                <input type="text" name="name" placeholder="Your Name" value="{{ name }}" required>
+                <input type="text" name="name" placeholder="Your Name" required>
             </div>
             <div class="input-group">
                 <select name="job_site" class="job-site-select" required>
                     <option value="">Select Job Site</option>
                     {% for site in job_sites %}
-                    <option value="{{ site }}" {% if job_site == site %}selected{% endif %}>{{ site }}</option>
+                    <option value="{{ site }}">{{ site }}</option>
                     {% endfor %}
                 </select>
             </div>
-            {% endif %}
             <div class="actions">
-                <button type="submit" name="action" value="clockin" {% if clocked_in %}disabled{% endif %}>Clock In</button>
-                <button type="submit" name="action" value="break" {% if not clocked_in or on_break %}disabled{% endif %}>Break</button>
-                <button type="submit" name="action" value="resume" {% if not clocked_in or not on_break %}disabled{% endif %}>Resume</button>
-                <button type="button" onclick="showClockOut()" {% if not clocked_in %}disabled{% endif %}>Clock Out</button>
+                <button type="submit" name="action" value="clockin">Clock In</button>
             </div>
-            <div id="clockout-section" style="display:none;">
-                <input type="password" name="input_code" placeholder="Enter your code">
-                <button type="submit" name="action" value="clockout">Confirm Clock Out</button>
+            <hr style="margin: 24px 0;">
+            <div class="input-group">
+                <input type="text" name="input_code" placeholder="Enter your code to clock out, take a break, or resume">
+            </div>
+            <div class="actions">
+                <button type="submit" name="action" value="clockout">Clock Out</button>
+                <button type="submit" name="action" value="break">Break</button>
+                <button type="submit" name="action" value="resume">Resume</button>
+            </div>
+            <div style="margin-top: 10px; color: #555; font-size: 0.95em;">
+                <b>Instructions:</b> Enter your code above to clock out, take a break, or resume.<br>
+                Use the top section to clock in for a new shift.
             </div>
         </form>
         <div class="export-section">
             <a href="{{ url_for('download_excel') }}" class="export-btn">Download Excel Spreadsheet</a>
+            <a href="{{ url_for('admin_view') }}" class="export-btn" style="background:#6b8eb7;">Admin Data View</a>
         </div>
     </div>
-    <script>
-        function showClockOut() {
-            document.getElementById('clockout-section').style.display = 'block';
-        }
-    </script>
 </body>
 </html>
