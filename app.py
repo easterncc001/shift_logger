@@ -212,11 +212,6 @@ def admin_logout():
     flash("Logged out.", "success")
     return redirect(url_for("admin_view"))
 
-@app.route("/initdb")
-def initdb():
-    db.create_all()
-    return "Database tables created!"
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
