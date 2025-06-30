@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Data View - Shift Logger</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .data-container {
+            max-width: 1200px;
+            margin: 20px auto;
+            background: #e9f0f7;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(44, 62, 80, 0.08);
+            padding: 20px;
+        }
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .data-table th, .data-table td {
+            padding: 12px 8px;
+            text-align: left;
+            border-bottom: 1px solid #b0c4de;
+        }
+        .data-table th {
+            background: #6b8eb7;
+            color: white;
+            font-weight: bold;
+        }
+        .data-table tr:nth-child(even) {
+            background: #f8f9fa;
+        }
+        .data-table tr:hover {
+            background: #e3f2fd;
+        }
+        .back-btn {
+            display: inline-block;
+            background: #6b8eb7;
+            color: white;
+            text-decoration: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+        .back-btn:hover {
+            background: #5a7ba6;
+        }
+        .export-btn {
+            display: inline-block;
+            background: #28a745;
+            color: white;
+            text-decoration: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-size: 0.9em;
+            margin: 5px;
+            transition: background 0.2s;
+        }
+        .export-btn:hover {
+            background: #218838;
+        }
+        .logout-btn {
+            display: inline-block;
+            background: #a33;
+            color: white;
+            text-decoration: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-size: 0.9em;
+            margin: 5px;
+            transition: background 0.2s;
+        }
+        .logout-btn:hover {
+            background: #800;
+        }
+        .filter-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+        }
+        .filter-section select {
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid #b0c4de;
+            margin-right: 10px;
+        }
+        .filter-section button {
+            padding: 8px 16px;
+            background: #6b8eb7;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .filter-section button:hover {
+            background: #5a7ba6;
+        }
+    </style>
+</head>
+<body>
+    <div class="data-container">
+        <a href="{{ url_for('index') }}" class="back-btn">← Back to Shift Logger</a>
+        <a href="{{ url_for('admin_logout') }}" class="logout-btn" style="float:right;">Logout</a>
+        <h1>Admin: Shift Data</h1>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            <ul class="flashes">
+            {% for category, message in messages %}
+              <li class="{{ category }}">{{ message|safe }}</li>
+            {% endfor %}
+            </ul>
+          {% endif %}
+        {% endwith %}
+        <div class="filter-section">
+            <form method="get" style="display: inline;">
+                <select name="job_site">
+                    <option value="">All Job Sites</option>
+                    {% for site in job_sites %}
+                    <option value="{{ site }}" {% if selected_site == site %}selected{% endif %}>{{ site }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit">Filter</button>
+                {% if selected_site %}
+                <a href="{{ url_for('admin_view') }}" class="export-btn" style="background:#17a2b8;">Clear Filter</a>
+                {% endif %}
+            </form>
+            <a href="{{ url_for('admin_export') }}" class="export-btn">Download All Data (CSV)</a>
+        </div>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Job Site</th>
+                    <th>Clock In</th>
+                    <th>Clock Out</th>
+                    <th>Total Time</th>
+                    <th>Working Time</th>
+                    <th>Breaks</th>
+                    <th>Code</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for shift in shifts %}
+                <tr>
+                    <td>{{ shift.name }}</td>
+                    <td>{{ shift.job_site }}</td>
+                    <td>{{ shift.clock_in.strftime('%Y-%m-%d %I:%M %p') if shift.clock_in else '' }}</td>
+                    <td>{{ shift.clock_out.strftime('%Y-%m-%d %I:%M %p') if shift.clock_out else '' }}</td>
+                    <td>{{ shift.total_time or '' }}</td>
+                    <td>{{ shift.working_time or '' }}</td>
+                    <td>{{ shift.breaks or '' }}</td>
+                    <td>{{ shift.code }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% if not shifts %}
+        <div style="text-align: center; padding: 40px; color: #6c757d;">
+            <h3>No shifts found</h3>
+            <p>{% if selected_site %}No shifts found for "{{ selected_site }}"{% else %}No shifts have been recorded yet{% endif %}</p>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>
