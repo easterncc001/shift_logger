@@ -14,8 +14,12 @@ ADMIN_PASSWORD = "EasternCC001"
 
 db = SQLAlchemy(app)
 
-with app.app_context():
-    db.create_all()
+# Initialize database tables with error handling
+try:
+    with app.app_context():
+        db.create_all()
+except Exception as e:
+    print(f"Database initialization error: {e}")
 
 class Shift(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -223,6 +227,15 @@ def admin_delete_shift(shift_id):
     db.session.commit()
     flash("Shift entry deleted.", "success")
     return redirect(url_for("admin_view"))
+
+@app.route("/initdb")
+def init_db():
+    try:
+        with app.app_context():
+            db.create_all()
+        return "Database tables created successfully!"
+    except Exception as e:
+        return f"Error creating tables: {str(e)}"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
