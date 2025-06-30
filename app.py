@@ -11,6 +11,7 @@ app.secret_key = 'your_secret_key'  # Change this to a random string
 SESSION_FILE = "web_session.json"
 LOG_FILE = "shift_log.txt"
 EXCEL_FILE = "shifts.xlsx"
+EXCEL_DOWNLOAD_PASSWORD = "EasternCC001"  # Change this to your desired password
 
 JOB_SITES = [
     "2025 DC water - Washington DC 20032",
@@ -206,12 +207,19 @@ def index():
                          name=name,
                          job_site=job_site)
 
-@app.route("/download-excel")
+@app.route("/download-excel", methods=["GET", "POST"])
 def download_excel():
-    if not os.path.exists(EXCEL_FILE):
-        flash("No Excel file found.", "error")
-        return redirect(url_for("index"))
-    return send_file(EXCEL_FILE, as_attachment=True)
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        if password == EXCEL_DOWNLOAD_PASSWORD:
+            if not os.path.exists(EXCEL_FILE):
+                flash("No Excel file found.", "error")
+                return redirect(url_for("index"))
+            return send_file(EXCEL_FILE, as_attachment=True)
+        else:
+            flash("Incorrect password.", "error")
+            return render_template("download_excel.html")
+    return render_template("download_excel.html")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
