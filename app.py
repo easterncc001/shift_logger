@@ -9,6 +9,7 @@ import base64
 import hashlib
 import time
 from sqlalchemy import text
+import uuid
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your_secret_key')
@@ -78,6 +79,7 @@ class Shift(db.Model):
     breaks = db.Column(db.String(255))
     code = db.Column(db.String(16), unique=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    qr_batch_id = db.Column(db.String(64))  # New column for QR batch ID
 
 class Break(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -352,23 +354,23 @@ def admin_delete_shift(shift_id):
 
 @app.route("/admin/qr_codes")
 def admin_qr_codes():
-    """Generate QR codes for all job sites"""
+    """Generate QR codes for all job sites with unique batch IDs"""
     if not session.get("admin_authenticated"):
         return redirect(url_for("admin_view"))
     
     qr_codes = {}
     errors = []
+    batch_id = str(uuid.uuid4())  # Unique batch ID for this generation event
     for job_site in JOB_SITES:
         try:
-            print(f"Generating QR for: {job_site}")
-            qr_image, timestamp, qr_url = generate_qr_code(job_site)
+            qr_image, timestamp, qr_url = generate_qr_code(job_site, batch_id)
             qr_codes[job_site] = {
                 'image': qr_image,
                 'timestamp': timestamp,
-                'url': qr_url
+                'url': qr_url,
+                'batch_id': batch_id
             }
         except Exception as e:
-            print(f"Error for {job_site}: {e}")
             errors.append(f"Error generating QR for {job_site}: {e}")
     if errors:
         flash("<br>".join(errors), "error")
@@ -383,34 +385,23 @@ def init_db():
     except Exception as e:
         return f"Error creating tables: {str(e)}"
 
-def generate_qr_code(job_site, timestamp=None):
-    """Generate QR code for a job site with timestamp validation"""
+def generate_qr_code(job_site, batch_id, timestamp=None):
+    """Generate QR code for a job site with batch ID and timestamp validation"""
     if timestamp is None:
         timestamp = int(time.time())
-    
-    # Create unique identifier for job site
     site_id = hashlib.md5(job_site.encode()).hexdigest()[:8]
-    
-    # Use dynamic host for QR code URLs
     from flask import request
-    host_url = request.host_url.rstrip('/') if request else 'http://localhost:10000'
-    qr_data = f"{host_url}/scan?site={site_id}&t={timestamp}"
+    host_url = request.host_url.rstrip('/')
+    qr_data = f"{host_url}/scan?site={site_id}&batch={batch_id}&t={timestamp}"
     qr_url = qr_data
-    
-    # Generate QR code
     qr = qrcode.QRCode(version=1, box_size=10, border=5)
     qr.add_data(qr_data)
     qr.make(fit=True)
-    
-    # Create image
     img = qr.make_image(fill_color="black", back_color="white")
-    
-    # Convert to base64 for display
     buffer = io.BytesIO()
     img.save(buffer, format='PNG')
     buffer.seek(0)
     img_str = base64.b64encode(buffer.getvalue()).decode()
-    
     return img_str, timestamp, qr_url
 
 def validate_qr_timestamp(timestamp, max_age_hours=24):
@@ -529,6 +520,15 @@ def add_subcontractor_column():
         db.session.execute(text("ALTER TABLE shift ADD COLUMN subcontractor VARCHAR(120) NOT NULL DEFAULT '';"))
         db.session.commit()
         return "Column added!"
+    except Exception as e:
+        return f"Error: {e}"
+
+@app.route('/add_qr_batch_id_column')
+def add_qr_batch_id_column():
+    try:
+        db.session.execute(text("ALTER TABLE shift ADD COLUMN qr_batch_id VARCHAR(64);"))
+        db.session.commit()
+        return "qr_batch_id column added!"
     except Exception as e:
         return f"Error: {e}"
 
