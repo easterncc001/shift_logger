@@ -11,13 +11,13 @@ import time
 from sqlalchemy import text
 
 app = Flask(__name__)
-app.secret_key = 'your_secret_key'
+app.secret_key = os.environ.get('SECRET_KEY', 'your_secret_key')
 
 DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///shifts.db')
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-ADMIN_PASSWORD = "EasternCC001"
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', "EasternCC001")
 
 db = SQLAlchemy(app)
 
@@ -100,7 +100,11 @@ JOB_SITES = [
 
 def generate_code():
     import random
-    return str(random.randint(100000, 999999))
+    # Ensure code is unique
+    while True:
+        code = str(random.randint(100000, 999999))
+        if not Shift.query.filter_by(code=code).first():
+            return code
 
 def format_seconds(secs):
     hours = int(secs // 3600)
@@ -176,7 +180,7 @@ def index():
                 flash("Break ended.", "success")
             else:
                 flash("No break to resume.", "error")
-            return redirect(url_for("index"))
+                return redirect(url_for("index"))
 
         elif action == "clockout":
             input_code = request.form.get("input_code")
@@ -203,7 +207,7 @@ def index():
                 breaks_str = "; ".join(
                     f"{b.start.strftime('%I:%M %p')} - {b.end.strftime('%I:%M %p')}" for b in breaks if b.start and b.end
                 )
-            working_time = total_time.total_seconds() - total_break
+                working_time = total_time.total_seconds() - total_break
             shift.clock_out = clock_out_dt
             shift.total_time = format_seconds(total_time.total_seconds())
             shift.working_time = format_seconds(working_time)
@@ -353,14 +357,19 @@ def admin_qr_codes():
         return redirect(url_for("admin_view"))
     
     qr_codes = {}
+    errors = []
     for job_site in JOB_SITES:
-        qr_image, timestamp = generate_qr_code(job_site)
-        qr_codes[job_site] = {
-            'image': qr_image,
-            'timestamp': timestamp,
-            'url': f"https://your-app.onrender.com/scan?site={hashlib.md5(job_site.encode()).hexdigest()[:8]}&t={timestamp}"
-        }
-    
+        try:
+            qr_image, timestamp, qr_url = generate_qr_code(job_site)
+            qr_codes[job_site] = {
+                'image': qr_image,
+                'timestamp': timestamp,
+                'url': qr_url
+            }
+        except Exception as e:
+            errors.append(f"Error generating QR for {job_site}: {e}")
+    if errors:
+        flash("<br>".join(errors), "error")
     return render_template("qr_codes.html", qr_codes=qr_codes)
 
 @app.route("/initdb")
@@ -380,8 +389,11 @@ def generate_qr_code(job_site, timestamp=None):
     # Create unique identifier for job site
     site_id = hashlib.md5(job_site.encode()).hexdigest()[:8]
     
-    # Create QR code data with timestamp
-    qr_data = f"https://your-app.onrender.com/scan?site={site_id}&t={timestamp}"
+    # Use dynamic host for QR code URLs
+    from flask import request
+    host_url = request.host_url.rstrip('/') if request else 'http://localhost:10000'
+    qr_data = f"{host_url}/scan?site={site_id}&t={timestamp}"
+    qr_url = qr_data
     
     # Generate QR code
     qr = qrcode.QRCode(version=1, box_size=10, border=5)
@@ -397,7 +409,7 @@ def generate_qr_code(job_site, timestamp=None):
     buffer.seek(0)
     img_str = base64.b64encode(buffer.getvalue()).decode()
     
-    return img_str, timestamp
+    return img_str, timestamp, qr_url
 
 def validate_qr_timestamp(timestamp, max_age_hours=24):
     """Validate QR code timestamp (prevent old QR codes)"""
