@@ -92,6 +92,7 @@
             <h3>Clock In</h3>
             <form method="post" action="{{ url_for('qr_clock_in') }}">
                 <input type="hidden" name="job_site" value="{{ job_site }}">
+                <input type="hidden" name="batch_id" value="{{ batch_id }}">
                 <div class="input-group">
                     <input type="text" name="name" placeholder="Your Name" required>
                 </div>
@@ -107,6 +108,7 @@
             <h3>Clock Out</h3>
             <form method="post" action="{{ url_for('qr_clock_out') }}">
                 <input type="hidden" name="job_site" value="{{ job_site }}">
+                <input type="hidden" name="batch_id" value="{{ batch_id }}">
                 <div class="input-group">
                     <input type="text" name="code" placeholder="Enter your code" required>
                 </div>
