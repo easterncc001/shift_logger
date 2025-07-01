@@ -426,22 +426,20 @@ def get_job_site_from_id(site_id):
 def qr_scan():
     """Handle QR code scanning for clock in/out"""
     site_id = request.args.get('site')
+    batch_id = request.args.get('batch')
     timestamp = request.args.get('t')
     
-    # Validate timestamp
-    if not validate_qr_timestamp(timestamp):
-        return "QR code expired. Please get a new QR code.", 400
-    
-    # Get job site from ID
+    # Validate batch_id and timestamp
+    if not batch_id:
+        return "Invalid QR code (missing batch ID).", 400
+    # Check if any active shifts exist for this job site and batch_id
     job_site = get_job_site_from_id(site_id)
     if not job_site:
         return "Invalid job site.", 400
-    
-    # Check if user is already clocked in at this site
-    # We'll need to identify the user somehow - for now, we'll use a simple approach
-    # In a real implementation, you might want user authentication
-    
-    return render_template("qr_scan.html", job_site=job_site)
+    active_shifts = Shift.query.filter_by(job_site=job_site, qr_batch_id=batch_id, clock_out=None).all()
+    if not active_shifts and not validate_qr_timestamp(timestamp):
+        return "QR code expired. Please get a new QR code.", 400
+    return render_template("qr_scan.html", job_site=job_site, batch_id=batch_id)
 
 @app.route("/qr_clock_in", methods=["POST"])
 def qr_clock_in():
@@ -449,49 +447,46 @@ def qr_clock_in():
     name = request.form.get("name", "").strip()
     subcontractor = request.form.get("subcontractor", "").strip()
     job_site = request.form.get("job_site", "")
-    
-    if not name or not subcontractor or not job_site:
+    batch_id = request.args.get('batch') or request.form.get('batch_id')
+    if not name or not subcontractor or not job_site or not batch_id:
         flash("Please fill in all fields.", "error")
-        return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], t=int(time.time())))
-    
+        return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
     # Check if already clocked in
-    existing_shift = Shift.query.filter_by(name=name, subcontractor=subcontractor, job_site=job_site, clock_out=None).first()
+    existing_shift = Shift.query.filter_by(name=name, subcontractor=subcontractor, job_site=job_site, clock_out=None, qr_batch_id=batch_id).first()
     if existing_shift:
         flash("You are already clocked in at this job site.", "error")
-        return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], t=int(time.time())))
-    
+        return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
     # Clock in
     now = datetime.now()
     code = generate_code()
-    shift = Shift(name=name, subcontractor=subcontractor, job_site=job_site, clock_in=now, code=code)
+    shift = Shift(name=name, subcontractor=subcontractor, job_site=job_site, clock_in=now, code=code, qr_batch_id=batch_id)
     db.session.add(shift)
     db.session.commit()
-    
     flash(f"Successfully clocked in! Your code is: <b>{code}</b>", "success")
-    return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], t=int(time.time())))
+    return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
 
 @app.route("/qr_clock_out", methods=["POST"])
 def qr_clock_out():
     """Handle clock out via QR code"""
     code = request.form.get("code", "").strip()
     job_site = request.form.get("job_site", "")
-    
-    if not code or not job_site:
+    batch_id = request.args.get('batch') or request.form.get('batch_id')
+    if not code or not job_site or not batch_id:
         flash("Please enter your code.", "error")
-        return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], t=int(time.time())))
-    
-    # Find shift
-    shift = Shift.query.filter_by(code=code, job_site=job_site, clock_out=None).first()
+        return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
+    # Find shift (prefer batch_id, fallback to old logic for backward compatibility)
+    shift = Shift.query.filter_by(code=code, job_site=job_site, clock_out=None, qr_batch_id=batch_id).first()
+    if not shift:
+        # Fallback: try without batch_id for old shifts
+        shift = Shift.query.filter_by(code=code, job_site=job_site, clock_out=None).first()
     if not shift:
         flash("Code not found or already clocked out.", "error")
-        return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], t=int(time.time())))
-    
+        return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
     # Clock out
     now = datetime.now()
     clock_in_dt = shift.clock_in
     clock_out_dt = now
     total_time = clock_out_dt - clock_in_dt
-    
     # Calculate breaks
     breaks = Break.query.filter_by(shift_code=code).all()
     total_break = 0
@@ -503,16 +498,14 @@ def qr_clock_out():
         breaks_str = "; ".join(
             f"{b.start.strftime('%I:%M %p')} - {b.end.strftime('%I:%M %p')}" for b in breaks if b.start and b.end
         )
-    
     working_time = total_time.total_seconds() - total_break
     shift.clock_out = clock_out_dt
     shift.total_time = format_seconds(total_time.total_seconds())
     shift.working_time = format_seconds(working_time)
     shift.breaks = breaks_str
     db.session.commit()
-    
     flash(f"Successfully clocked out! Working time: <b>{format_seconds(working_time)}</b>", "success")
-    return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], t=int(time.time())))
+    return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
 
 @app.route('/add_subcontractor_column')
 def add_subcontractor_column():
