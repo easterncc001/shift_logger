@@ -360,6 +360,7 @@ def admin_qr_codes():
     errors = []
     for job_site in JOB_SITES:
         try:
+            print(f"Generating QR for: {job_site}")
             qr_image, timestamp, qr_url = generate_qr_code(job_site)
             qr_codes[job_site] = {
                 'image': qr_image,
@@ -367,6 +368,7 @@ def admin_qr_codes():
                 'url': qr_url
             }
         except Exception as e:
+            print(f"Error for {job_site}: {e}")
             errors.append(f"Error generating QR for {job_site}: {e}")
     if errors:
         flash("<br>".join(errors), "error")
