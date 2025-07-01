@@ -209,7 +209,7 @@ def index():
                 breaks_str = "; ".join(
                     f"{b.start.strftime('%I:%M %p')} - {b.end.strftime('%I:%M %p')}" for b in breaks if b.start and b.end
                 )
-                working_time = total_time.total_seconds() - total_break
+            working_time = total_time.total_seconds() - total_break
             shift.clock_out = clock_out_dt
             shift.total_time = format_seconds(total_time.total_seconds())
             shift.working_time = format_seconds(working_time)
