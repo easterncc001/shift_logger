@@ -268,57 +268,62 @@ def get_subcontractor_suggestions():
 
 @app.route("/admin", methods=["GET", "POST"])
 def admin_view():
-    if not session.get("admin_authenticated"):
-        if request.method == "POST":
-            password = request.form.get("password", "")
-            if password == ADMIN_PASSWORD:
-                session["admin_authenticated"] = True
+    try:
+        if not session.get("admin_authenticated"):
+            if request.method == "POST":
+                password = request.form.get("password", "")
+                if password == ADMIN_PASSWORD:
+                    session["admin_authenticated"] = True
+                else:
+                    flash("Incorrect password.", "error")
+                    return render_template("admin_login.html")
             else:
-                flash("Incorrect password.", "error")
                 return render_template("admin_login.html")
-        else:
-            return render_template("admin_login.html")
-    
-    subcontractor_filter = request.args.get('subcontractor', '')
-    job_site_filter = request.args.get('job_site', '')
-    
-    # Get shifts
-    query = Shift.query
-    if subcontractor_filter:
-        query = query.filter_by(subcontractor=subcontractor_filter)
-    if job_site_filter:
-        query = query.filter_by(job_site=job_site_filter)
-    shifts = query.order_by(Shift.created_at.desc()).all()
-    
-    # Get subcontractor history with proper date formatting
-    history_query = SubcontractorProjectHistory.query
-    if subcontractor_filter:
-        history_query = history_query.filter_by(subcontractor=subcontractor_filter)
-    if job_site_filter:
-        history_query = history_query.filter_by(job_site=job_site_filter)
-    histories = history_query.order_by(
-        SubcontractorProjectHistory.subcontractor,
-        SubcontractorProjectHistory.job_site
-    ).all()
-    
-    # Get unique subcontractors and job sites for filters
-    subcontractors = [row[0] for row in db.session.query(Shift.subcontractor).distinct().all()]
-    job_sites = [row[0] for row in db.session.query(Shift.job_site).distinct().all()]
-    
-    # Calculate total days and hours worked
-    subcontractor_stats = calculate_subcontractor_days()
-    
-    return render_template(
-        "admin.html", 
-        shifts=shifts,
-        histories=histories,
-        subcontractors=subcontractors,
-        job_sites=job_sites,
-        selected_subcontractor=subcontractor_filter,
-        selected_job_site=job_site_filter,
-        subcontractor_stats=subcontractor_stats,
-        format_time_for_display=format_time_for_display
-    )
+        
+        subcontractor_filter = request.args.get('subcontractor', '')
+        job_site_filter = request.args.get('job_site', '')
+        
+        # Get shifts
+        query = Shift.query
+        if subcontractor_filter:
+            query = query.filter_by(subcontractor=subcontractor_filter)
+        if job_site_filter:
+            query = query.filter_by(job_site=job_site_filter)
+        shifts = query.order_by(Shift.created_at.desc()).all()
+        
+        # Get subcontractor history with proper date formatting
+        history_query = SubcontractorProjectHistory.query
+        if subcontractor_filter:
+            history_query = history_query.filter_by(subcontractor=subcontractor_filter)
+        if job_site_filter:
+            history_query = history_query.filter_by(job_site=job_site_filter)
+        histories = history_query.order_by(
+            SubcontractorProjectHistory.subcontractor,
+            SubcontractorProjectHistory.job_site
+        ).all()
+        
+        # Get unique subcontractors and job sites for filters
+        subcontractors = [row[0] for row in db.session.query(Shift.subcontractor).distinct().all()]
+        job_sites = [row[0] for row in db.session.query(Shift.job_site).distinct().all()]
+        
+        # Calculate total days and hours worked
+        subcontractor_stats = calculate_subcontractor_days()
+        
+        return render_template(
+            "admin.html", 
+            shifts=shifts,
+            histories=histories,
+            subcontractors=subcontractors,
+            job_sites=job_sites,
+            selected_subcontractor=subcontractor_filter,
+            selected_job_site=job_site_filter,
+            subcontractor_stats=subcontractor_stats,
+            format_time_for_display=format_time_for_display
+        )
+    except Exception as e:
+        print(f"Admin view error: {str(e)}")  # This will show in your server logs
+        db.session.rollback()  # Roll back any failed transactions
+        return f"An error occurred: {str(e)}", 500  # Return error to browser
 
 def calculate_subcontractor_days():
     """Calculate days worked and total hours for each subcontractor"""
@@ -777,6 +782,30 @@ def rename_total_days_to_manpower():
         return "Column renamed successfully!"
     except Exception as e:
         return f"Error: {e}"
+
+@app.route('/check_tables')
+def check_tables():
+    try:
+        # Check Shift table
+        shifts = db.session.query(Shift).first()
+        shift_columns = Shift.__table__.columns.keys()
+        
+        # Check SubcontractorProjectHistory table
+        histories = db.session.query(SubcontractorProjectHistory).first()
+        history_columns = SubcontractorProjectHistory.__table__.columns.keys()
+        
+        # Check Break table
+        breaks = db.session.query(Break).first()
+        break_columns = Break.__table__.columns.keys()
+        
+        return {
+            'shift_columns': shift_columns,
+            'history_columns': history_columns,
+            'break_columns': break_columns,
+            'tables_exist': True
+        }
+    except Exception as e:
+        return f"Database error: {str(e)}"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
