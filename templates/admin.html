@@ -297,35 +297,49 @@
         </div>
 
         <!-- Shifts Table -->
-        <h2>Recent Shifts</h2>
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Subcontractor</th>
-                    <th>Job Site</th>
-                    <th>Working Time</th>
-                    <th>Code</th>
-                    <th>Action</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for shift in shifts %}
-                <tr>
-                    <td>{{ shift.name }}</td>
-                    <td>{{ shift.subcontractor }}</td>
-                    <td>{{ shift.job_site }}</td>
-                    <td>{{ shift.working_time or '' }}</td>
-                    <td>{{ shift.code }}</td>
-                    <td>
-                        <form method="post" action="{{ url_for('admin_delete_shift', shift_id=shift.id) }}" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this entry?');">
-                            <button type="submit" class="export-btn" style="background:#dc3545;">Delete</button>
-                        </form>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <div class="card mb-4">
+            <div class="card-header">
+                <h2>Recent Shifts</h2>
+            </div>
+            <div class="card-body">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Subcontractor</th>
+                            <th>Job Site</th>
+                            <th>Clock In</th>
+                            <th>Clock Out</th>
+                            <th>Total Time</th>
+                            <th>Working Time</th>
+                            <th>Breaks</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for shift in shifts %}
+                        <tr>
+                            <td>{{ shift.name }}</td>
+                            <td>{{ shift.subcontractor }}</td>
+                            <td>{{ shift.job_site }}</td>
+                            <td>{{ format_time_for_display(shift.clock_in) }}</td>
+                            <td>{{ format_time_for_display(shift.clock_out) if shift.clock_out else "Still Working" }}</td>
+                            <td>{{ shift.total_time if shift.total_time else "N/A" }}</td>
+                            <td>{{ shift.working_time if shift.working_time else "N/A" }}</td>
+                            <td>{{ shift.breaks if shift.breaks else "No breaks" }}</td>
+                            <td>
+                                {% if shift.clock_out %}
+                                <form action="{{ url_for('admin_delete_shift', shift_id=shift.id) }}" method="POST" style="display: inline;">
+                                    <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure you want to delete this shift?')">Delete</button>
+                                </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
         {% if not shifts %}
         <div style="text-align: center; padding: 40px; color: #6c757d;">
             <h3>No shifts found</h3>
