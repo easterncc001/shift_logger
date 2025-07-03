@@ -16,7 +16,13 @@ from sqlalchemy import func, distinct
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your_secret_key')
 
-DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///shifts.db')
+# Fix for Heroku/Render PostgreSQL URL
+DATABASE_URL = os.environ.get('DATABASE_URL')
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+elif not DATABASE_URL:
+    DATABASE_URL = 'sqlite:///shifts.db'
+
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
