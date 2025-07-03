@@ -83,7 +83,7 @@
             background: white;
             border-radius: 8px;
         }
-        .filter-section select {
+        .filter-section select, .filter-section input[type="date"] {
             padding: 8px 12px;
             border-radius: 4px;
             border: 1px solid #b0c4de;
@@ -100,13 +100,36 @@
         .filter-section button:hover {
             background: #5a7ba6;
         }
+        .summary-section {
+            margin: 20px 0;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+        }
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        .summary-table th, .summary-table td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .history-table {
+            margin-top: 30px;
+        }
+        .daily-total {
+            font-weight: bold;
+            color: #28a745;
+        }
     </style>
 </head>
 <body>
     <div class="data-container">
         <a href="{{ url_for('index') }}" class="back-btn">← Back to Shift Logger</a>
         <a href="{{ url_for('admin_logout') }}" class="logout-btn" style="float:right;">Logout</a>
-        <h1>Admin: Shift Data</h1>
+        <h1>Admin Data View</h1>
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}
             <ul class="flashes">
@@ -117,39 +140,154 @@
           {% endif %}
         {% endwith %}
         
-        <!-- Subcontractor Days Summary -->
-        <div class="summary-section" style="margin: 20px 0; padding: 15px; background: white; border-radius: 8px;">
-            <h3>Subcontractor Days Worked Summary</h3>
-            <table style="width: 100%; border-collapse: collapse;">
-                <tr style="background: #f8f9fa;">
-                    <th style="padding: 8px; border: 1px solid #ddd;">Subcontractor</th>
-                    <th style="padding: 8px; border: 1px solid #ddd;">Days Worked</th>
-                </tr>
-                {% for subcontractor, days in subcontractor_days.items() %}
-                <tr>
-                    <td style="padding: 8px; border: 1px solid #ddd;">{{ subcontractor }}</td>
-                    <td style="padding: 8px; border: 1px solid #ddd;">{{ "%.2f"|format(days) }}</td>
-                </tr>
-                {% endfor %}
-            </table>
-        </div>
-        
+        <!-- Filter Section -->
         <div class="filter-section">
-            <form method="get" style="display: inline;">
+            <form method="get">
                 <select name="subcontractor">
                     <option value="">All Subcontractors</option>
                     {% for subcontractor in subcontractors %}
                     <option value="{{ subcontractor }}" {% if selected_subcontractor == subcontractor %}selected{% endif %}>{{ subcontractor }}</option>
                     {% endfor %}
                 </select>
-                <button type="submit">Filter</button>
-                {% if selected_subcontractor %}
-                <a href="{{ url_for('admin_view') }}" class="export-btn" style="background:#17a2b8;">Clear Filter</a>
+                <select name="job_site">
+                    <option value="">All Job Sites</option>
+                    {% for site in job_sites %}
+                    <option value="{{ site }}" {% if selected_job_site == site %}selected{% endif %}>{{ site }}</option>
+                    {% endfor %}
+                </select>
+                <input type="date" name="start_date" value="{{ start_date.strftime('%Y-%m-%d') if start_date else '' }}" placeholder="Start Date">
+                <input type="date" name="end_date" value="{{ end_date.strftime('%Y-%m-%d') if end_date else '' }}" placeholder="End Date">
+                <button type="submit" class="export-btn">Filter</button>
+                {% if selected_subcontractor or selected_job_site or start_date or end_date %}
+                <a href="{{ url_for('admin_view') }}" class="export-btn" style="background: #6c757d;">Clear Filters</a>
                 {% endif %}
             </form>
-            <a href="{{ url_for('admin_export') }}" class="export-btn">Download All Data (CSV)</a>
-            <a href="{{ url_for('admin_qr_codes') }}" class="export-btn" style="background:#17a2b8;">Generate QR Codes</a>
         </div>
+
+        <!-- Cumulative Days Worked -->
+        <div class="summary-section">
+            <h2>Cumulative Days Worked</h2>
+            <table class="summary-table">
+                <thead>
+                    <tr>
+                        <th>Subcontractor</th>
+                        <th>Total Days</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for subcontractor, days in cumulative_totals.items() %}
+                    <tr>
+                        <td>{{ subcontractor }}</td>
+                        <td>{{ days }}</td>
+                    </tr>
+                    {% endfor %}
+                    <tr class="daily-summary">
+                        <td style="text-align: right;"><strong>Grand Total Days:</strong></td>
+                        <td class="daily-total">{{ cumulative_totals.values()|sum }}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Daily Manpower Section -->
+        <div class="summary-section">
+            <h2>Daily Manpower Summary</h2>
+            <table class="summary-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Job Site</th>
+                        <th>Subcontractor</th>
+                        <th>Daily Manpower</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% set current_date = None %}
+                    {% set daily_total = 0 %}
+                    {% for record in daily_manpower %}
+                        {% if current_date != record.date %}
+                            {% if current_date is not none %}
+                                <tr class="daily-summary">
+                                    <td colspan="3" style="text-align: right;"><strong>Total for {{ current_date }}:</strong></td>
+                                    <td class="daily-total">{{ daily_total }}</td>
+                                </tr>
+                            {% endif %}
+                            {% set current_date = record.date %}
+                            {% set daily_total = 0 %}
+                        {% endif %}
+                        {% set daily_total = daily_total + record.manpower %}
+                        <tr>
+                            <td>{{ record.date.strftime('%Y-%m-%d') }}</td>
+                            <td>{{ record.job_site }}</td>
+                            <td>{{ record.subcontractor }}</td>
+                            <td>{{ record.manpower }}</td>
+                        </tr>
+                        {% if loop.last %}
+                            <tr class="daily-summary">
+                                <td colspan="3" style="text-align: right;"><strong>Total for {{ current_date }}:</strong></td>
+                                <td class="daily-total">{{ daily_total }}</td>
+                            </tr>
+                        {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Summary Section -->
+        <div class="summary-section">
+            <h2>Subcontractor Total Days Summary</h2>
+            <table class="summary-table">
+                <thead>
+                    <tr>
+                        <th>Subcontractor</th>
+                        <th>Total Days Worked</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for subcontractor, days in subcontractor_days.items() %}
+                    <tr>
+                        <td>{{ subcontractor }}</td>
+                        <td>{{ days }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Subcontractor History Section -->
+        <div class="summary-section history-table">
+            <h2>Subcontractor Project History</h2>
+            <table class="summary-table">
+                <thead>
+                    <tr>
+                        <th>Subcontractor</th>
+                        <th>Job Site</th>
+                        <th>First Day</th>
+                        <th>Last Day</th>
+                        <th>Total Days</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for history in histories %}
+                    <tr>
+                        <td>{{ history.subcontractor }}</td>
+                        <td>{{ history.job_site }}</td>
+                        <td>{{ history.first_day.strftime('%Y-%m-%d') }}</td>
+                        <td>{{ history.last_day.strftime('%Y-%m-%d') }}</td>
+                        <td>{{ history.total_days }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Export Section -->
+        <div class="filter-section">
+            <a href="{{ url_for('admin_export') }}" class="export-btn">Download All Data (CSV)</a>
+        </div>
+
+        <!-- Shifts Table -->
+        <h2>Recent Shifts</h2>
         <table class="data-table">
             <thead>
                 <tr>
@@ -157,7 +295,6 @@
                     <th>Subcontractor</th>
                     <th>Job Site</th>
                     <th>Working Time</th>
-                    <th>Days Worked</th>
                     <th>Code</th>
                     <th>Action</th>
                 </tr>
@@ -169,22 +306,10 @@
                     <td>{{ shift.subcontractor }}</td>
                     <td>{{ shift.job_site }}</td>
                     <td>{{ shift.working_time or '' }}</td>
-                    <td>
-                        {% if shift.working_time %}
-                            {% set time_parts = shift.working_time.split() %}
-                            {% set hours = time_parts[0].replace('h', '') | int %}
-                            {% set minutes = time_parts[1].replace('m', '') | int if time_parts|length > 1 else 0 %}
-                            {% set total_hours = hours + (minutes / 60) %}
-                            {% set days = total_hours / 8 %}
-                            {{ "%.2f"|format(days) }}
-                        {% else %}
-                            -
-                        {% endif %}
-                    </td>
                     <td>{{ shift.code }}</td>
                     <td>
                         <form method="post" action="{{ url_for('admin_delete_shift', shift_id=shift.id) }}" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this entry?');">
-                            <button type="submit" class="export-btn secondary" style="background:#a33;">Delete</button>
+                            <button type="submit" class="export-btn" style="background:#dc3545;">Delete</button>
                         </form>
                     </td>
                 </tr>
