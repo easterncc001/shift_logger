@@ -113,16 +113,8 @@ class SubcontractorProjectHistory(db.Model):
     job_site = db.Column(db.String(255), nullable=False)
     first_day = db.Column(db.DateTime, nullable=False)
     last_day = db.Column(db.DateTime, nullable=False)
-    total_days = db.Column(db.Integer, default=0)
-    __table_args__ = (db.UniqueConstraint('subcontractor', 'job_site', name='uix_subcontractor_jobsite'),)
-
-class DailyManpower(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    date = db.Column(db.Date, nullable=False)
-    job_site = db.Column(db.String(255), nullable=False)
-    subcontractor = db.Column(db.String(120), nullable=False)
     manpower = db.Column(db.Integer, default=0)
-    __table_args__ = (db.UniqueConstraint('date', 'job_site', 'subcontractor', name='uix_daily_manpower'),)
+    __table_args__ = (db.UniqueConstraint('subcontractor', 'job_site', name='uix_subcontractor_jobsite'),)
 
 JOB_SITES = [
     "2025 DC water - Washington DC 20032",
@@ -289,15 +281,6 @@ def admin_view():
     
     subcontractor_filter = request.args.get('subcontractor', '')
     job_site_filter = request.args.get('job_site', '')
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    
-    # Convert date strings to date objects if provided
-    try:
-        start_date = datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None
-        end_date = datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None
-    except ValueError:
-        start_date = end_date = None
     
     # Get shifts
     query = Shift.query
@@ -307,67 +290,61 @@ def admin_view():
         query = query.filter_by(job_site=job_site_filter)
     shifts = query.order_by(Shift.created_at.desc()).all()
     
-    # Get subcontractor history
+    # Get subcontractor history with proper date formatting
     history_query = SubcontractorProjectHistory.query
     if subcontractor_filter:
         history_query = history_query.filter_by(subcontractor=subcontractor_filter)
     if job_site_filter:
         history_query = history_query.filter_by(job_site=job_site_filter)
-    histories = history_query.all()
-    
-    # Get daily manpower data
-    daily_manpower = get_daily_manpower_summary(
-        start_date=start_date,
-        end_date=end_date,
-        job_site=job_site_filter,
-        subcontractor=subcontractor_filter
-    )
-    
-    # Get cumulative days worked
-    cumulative_totals = get_cumulative_manpower_totals(
-        start_date=start_date,
-        end_date=end_date,
-        job_site=job_site_filter,
-        subcontractor=subcontractor_filter
-    )
+    histories = history_query.order_by(
+        SubcontractorProjectHistory.subcontractor,
+        SubcontractorProjectHistory.job_site
+    ).all()
     
     # Get unique subcontractors and job sites for filters
     subcontractors = [row[0] for row in db.session.query(Shift.subcontractor).distinct().all()]
     job_sites = [row[0] for row in db.session.query(Shift.job_site).distinct().all()]
     
-    # Calculate total days worked
-    subcontractor_days = calculate_subcontractor_days()
+    # Calculate total days and hours worked
+    subcontractor_stats = calculate_subcontractor_days()
     
     return render_template(
         "admin.html", 
         shifts=shifts,
         histories=histories,
-        daily_manpower=daily_manpower,
-        cumulative_totals=cumulative_totals,
         subcontractors=subcontractors,
         job_sites=job_sites,
         selected_subcontractor=subcontractor_filter,
         selected_job_site=job_site_filter,
-        start_date=start_date,
-        end_date=end_date,
-        subcontractor_days=subcontractor_days,
+        subcontractor_stats=subcontractor_stats,
         format_time_for_display=format_time_for_display
     )
 
 def calculate_subcontractor_days():
-    """Calculate days worked for each subcontractor (1 day per completed shift)"""
-    subcontractor_days = {}
+    """Calculate days worked and total hours for each subcontractor"""
+    subcontractor_stats = {}
     
     # Get all completed shifts
     completed_shifts = Shift.query.filter(Shift.clock_out.isnot(None)).all()
     
     for shift in completed_shifts:
-        if shift.subcontractor not in subcontractor_days:
-            subcontractor_days[shift.subcontractor] = 0
+        if shift.subcontractor not in subcontractor_stats:
+            subcontractor_stats[shift.subcontractor] = {
+                'days': 0,
+                'hours': 0.0
+            }
         # Count 1 day for each completed shift
-        subcontractor_days[shift.subcontractor] += 1
+        subcontractor_stats[shift.subcontractor]['days'] += 1
+        
+        # Calculate hours from working_time
+        if shift.working_time:
+            time_parts = shift.working_time.split()
+            hours = float(time_parts[0].replace('h', ''))
+            minutes = float(time_parts[1].replace('m', '')) if len(time_parts) > 1 else 0
+            total_hours = hours + (minutes / 60)
+            subcontractor_stats[shift.subcontractor]['hours'] += total_hours
             
-    return subcontractor_days
+    return subcontractor_stats
 
 def update_subcontractor_history(shift):
     """Update subcontractor project history when a shift is completed"""
@@ -376,20 +353,27 @@ def update_subcontractor_history(shift):
         job_site=shift.job_site
     ).first()
     
+    shift_date = shift.clock_out.date()
+    
     if not history:
         # First time this subcontractor works on this job site
         history = SubcontractorProjectHistory(
             subcontractor=shift.subcontractor,
             job_site=shift.job_site,
-            first_day=shift.clock_in.date(),
-            last_day=shift.clock_out.date(),
-            total_days=1
+            first_day=shift_date,
+            last_day=shift_date,
+            manpower=1  # Start with 1 for this shift
         )
         db.session.add(history)
     else:
         # Update existing history
-        history.last_day = shift.clock_out.date()
-        history.total_days += 1
+        # Update first/last day if needed
+        if shift_date < history.first_day.date():
+            history.first_day = shift_date
+        if shift_date > history.last_day.date():
+            history.last_day = shift_date
+        # Always increment manpower for each shift
+        history.manpower += 1
     
     db.session.commit()
 
@@ -782,6 +766,15 @@ def add_daily_manpower_table():
         with app.app_context():
             db.create_all()
         return "Daily manpower table added successfully!"
+    except Exception as e:
+        return f"Error: {e}"
+
+@app.route('/rename_total_days_to_manpower')
+def rename_total_days_to_manpower():
+    try:
+        db.session.execute(text("ALTER TABLE subcontractor_project_history RENAME COLUMN total_days TO manpower;"))
+        db.session.commit()
+        return "Column renamed successfully!"
     except Exception as e:
         return f"Error: {e}"
 
