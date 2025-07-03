@@ -621,7 +621,7 @@ def qr_clock_in():
     return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
 
 def sync_to_procore(shift):
-    """Sync completed shift data to Procore"""
+    """Sync completed shift data to Procore's Manpower interface"""
     if not all([PROCORE_CLIENT_ID, PROCORE_CLIENT_SECRET, PROCORE_COMPANY_ID]):
         print("Procore credentials not configured")
         return
@@ -644,6 +644,16 @@ def sync_to_procore(shift):
         token_response.raise_for_status()
         access_token = token_response.json()["access_token"]
 
+        # Get the count of workers for this subcontractor at this job site for today
+        today = shift.clock_out.date()
+        daily_count = DailyManpower.query.filter_by(
+            date=today,
+            job_site=shift.job_site,
+            subcontractor=shift.subcontractor
+        ).first()
+        
+        workers_count = daily_count.manpower if daily_count else 1
+
         # Calculate hours from working time
         try:
             time_parts = shift.working_time.split()
@@ -654,14 +664,25 @@ def sync_to_procore(shift):
             print(f"Error parsing working time: {shift.working_time}")
             return
 
-        # Prepare manpower data
+        # Get cumulative manpower total for this subcontractor
+        cumulative_total = db.session.query(
+            func.count(distinct(DailyManpower.date))
+        ).filter_by(
+            subcontractor=shift.subcontractor,
+            job_site=shift.job_site
+        ).scalar() or 0
+
+        # Prepare manpower data matching Procore's interface
         manpower_data = {
             "manpower_log": {
-                "date": shift.clock_in.strftime("%Y-%m-%d"),
-                "vendor": shift.subcontractor,
-                "workers": 1,
-                "hours": round(total_hours, 2),
-                "notes": f"Worker: {shift.name}\nClock In: {shift.clock_in.strftime('%I:%M %p')}\nClock Out: {shift.clock_out.strftime('%I:%M %p')}"
+                "company": shift.subcontractor,  # Company field is the subcontractor name
+                "workers": workers_count,        # Number of workers for this subcontractor today
+                "hours": 10,                    # Standard 10-hour day
+                "total_hours": total_hours,     # Actual hours worked
+                "location": shift.job_site,     # Job site as location
+                "manpower": cumulative_total,   # Cumulative days worked to date
+                "date": shift.clock_out.strftime("%Y-%m-%d"),
+                "notes": f"Daily workers: {workers_count}\nCumulative days: {cumulative_total}"
             }
         }
 
@@ -673,7 +694,7 @@ def sync_to_procore(shift):
         }
         response = requests.post(api_url, json=manpower_data, headers=headers)
         response.raise_for_status()
-        print(f"Successfully synced shift data to Procore for {shift.name}")
+        print(f"Successfully synced manpower data to Procore for {shift.subcontractor}")
 
     except requests.exceptions.RequestException as e:
         print(f"Error syncing to Procore: {e}")
