@@ -10,6 +10,8 @@ import hashlib
 import time
 from sqlalchemy import text
 import uuid
+import requests
+from sqlalchemy import func, distinct
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your_secret_key')
@@ -19,6 +21,18 @@ app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', "EasternCC001")
+
+# Procore configuration
+PROCORE_CLIENT_ID = os.environ.get('PROCORE_CLIENT_ID')
+PROCORE_CLIENT_SECRET = os.environ.get('PROCORE_CLIENT_SECRET')
+PROCORE_COMPANY_ID = os.environ.get('PROCORE_COMPANY_ID')
+
+# Map job sites to Procore project IDs
+PROCORE_PROJECT_MAP = {
+    "2025 DC water - Washington DC 20032": os.environ.get('PROCORE_DC_WATER_PROJECT_ID'),
+    "BRWRF Phase 3 Package 1 - Ashburn 20147": os.environ.get('PROCORE_BRWRF_PROJECT_ID'),
+    # Add mappings for other job sites
+}
 
 db = SQLAlchemy(app)
 
@@ -86,6 +100,23 @@ class Break(db.Model):
     shift_code = db.Column(db.String(16), db.ForeignKey('shift.code'), nullable=False)
     start = db.Column(db.DateTime, nullable=False)
     end = db.Column(db.DateTime)
+
+class SubcontractorProjectHistory(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    subcontractor = db.Column(db.String(120), nullable=False)
+    job_site = db.Column(db.String(255), nullable=False)
+    first_day = db.Column(db.DateTime, nullable=False)
+    last_day = db.Column(db.DateTime, nullable=False)
+    total_days = db.Column(db.Integer, default=0)
+    __table_args__ = (db.UniqueConstraint('subcontractor', 'job_site', name='uix_subcontractor_jobsite'),)
+
+class DailyManpower(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.Date, nullable=False)
+    job_site = db.Column(db.String(255), nullable=False)
+    subcontractor = db.Column(db.String(120), nullable=False)
+    manpower = db.Column(db.Integer, default=0)
+    __table_args__ = (db.UniqueConstraint('date', 'job_site', 'subcontractor', name='uix_daily_manpower'),)
 
 JOB_SITES = [
     "2025 DC water - Washington DC 20032",
@@ -251,52 +282,170 @@ def admin_view():
             return render_template("admin_login.html")
     
     subcontractor_filter = request.args.get('subcontractor', '')
+    job_site_filter = request.args.get('job_site', '')
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    
+    # Convert date strings to date objects if provided
+    try:
+        start_date = datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None
+        end_date = datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None
+    except ValueError:
+        start_date = end_date = None
+    
+    # Get shifts
     query = Shift.query
     if subcontractor_filter:
         query = query.filter_by(subcontractor=subcontractor_filter)
-    
+    if job_site_filter:
+        query = query.filter_by(job_site=job_site_filter)
     shifts = query.order_by(Shift.created_at.desc()).all()
-    subcontractors = [row[0] for row in db.session.query(Shift.subcontractor).distinct().all()]
     
-    # Calculate days worked for each subcontractor
+    # Get subcontractor history
+    history_query = SubcontractorProjectHistory.query
+    if subcontractor_filter:
+        history_query = history_query.filter_by(subcontractor=subcontractor_filter)
+    if job_site_filter:
+        history_query = history_query.filter_by(job_site=job_site_filter)
+    histories = history_query.all()
+    
+    # Get daily manpower data
+    daily_manpower = get_daily_manpower_summary(
+        start_date=start_date,
+        end_date=end_date,
+        job_site=job_site_filter,
+        subcontractor=subcontractor_filter
+    )
+    
+    # Get cumulative days worked
+    cumulative_totals = get_cumulative_manpower_totals(
+        start_date=start_date,
+        end_date=end_date,
+        job_site=job_site_filter,
+        subcontractor=subcontractor_filter
+    )
+    
+    # Get unique subcontractors and job sites for filters
+    subcontractors = [row[0] for row in db.session.query(Shift.subcontractor).distinct().all()]
+    job_sites = [row[0] for row in db.session.query(Shift.job_site).distinct().all()]
+    
+    # Calculate total days worked
     subcontractor_days = calculate_subcontractor_days()
     
-    return render_template("admin.html", 
-                         shifts=shifts, 
-                         subcontractors=subcontractors, 
-                         selected_subcontractor=subcontractor_filter,
-                         subcontractor_days=subcontractor_days,
-                         format_time_for_display=format_time_for_display)
+    return render_template(
+        "admin.html", 
+        shifts=shifts,
+        histories=histories,
+        daily_manpower=daily_manpower,
+        cumulative_totals=cumulative_totals,
+        subcontractors=subcontractors,
+        job_sites=job_sites,
+        selected_subcontractor=subcontractor_filter,
+        selected_job_site=job_site_filter,
+        start_date=start_date,
+        end_date=end_date,
+        subcontractor_days=subcontractor_days,
+        format_time_for_display=format_time_for_display
+    )
 
 def calculate_subcontractor_days():
-    """Calculate days worked for each subcontractor (8 hours = 1 day)"""
+    """Calculate days worked for each subcontractor (1 day per completed shift)"""
     subcontractor_days = {}
     
     # Get all completed shifts
     completed_shifts = Shift.query.filter(Shift.clock_out.isnot(None)).all()
     
     for shift in completed_shifts:
-        if not shift.working_time:
-            continue
+        if shift.subcontractor not in subcontractor_days:
+            subcontractor_days[shift.subcontractor] = 0
+        # Count 1 day for each completed shift
+        subcontractor_days[shift.subcontractor] += 1
             
-        # Parse working time (format: "Xh Ym")
-        try:
-            time_parts = shift.working_time.split()
-            hours = int(time_parts[0].replace('h', ''))
-            minutes = int(time_parts[1].replace('m', '')) if len(time_parts) > 1 else 0
-            total_hours = hours + (minutes / 60)
-            
-            # Calculate days (8 hours = 1 day)
-            days = total_hours / 8
-            
-            if shift.subcontractor not in subcontractor_days:
-                subcontractor_days[shift.subcontractor] = 0
-            subcontractor_days[shift.subcontractor] += days
-            
-        except (ValueError, IndexError):
-            continue
-    
     return subcontractor_days
+
+def update_subcontractor_history(shift):
+    """Update subcontractor project history when a shift is completed"""
+    history = SubcontractorProjectHistory.query.filter_by(
+        subcontractor=shift.subcontractor,
+        job_site=shift.job_site
+    ).first()
+    
+    if not history:
+        # First time this subcontractor works on this job site
+        history = SubcontractorProjectHistory(
+            subcontractor=shift.subcontractor,
+            job_site=shift.job_site,
+            first_day=shift.clock_in.date(),
+            last_day=shift.clock_out.date(),
+            total_days=1
+        )
+        db.session.add(history)
+    else:
+        # Update existing history
+        history.last_day = shift.clock_out.date()
+        history.total_days += 1
+    
+    db.session.commit()
+
+def update_daily_manpower(shift):
+    """Update daily manpower count when a shift is completed"""
+    shift_date = shift.clock_out.date()
+    
+    # Get or create daily manpower record
+    daily = DailyManpower.query.filter_by(
+        date=shift_date,
+        job_site=shift.job_site,
+        subcontractor=shift.subcontractor
+    ).first()
+    
+    if not daily:
+        daily = DailyManpower(
+            date=shift_date,
+            job_site=shift.job_site,
+            subcontractor=shift.subcontractor,
+            manpower=1
+        )
+        db.session.add(daily)
+    else:
+        daily.manpower += 1
+    
+    db.session.commit()
+
+def get_daily_manpower_summary(start_date=None, end_date=None, job_site=None, subcontractor=None):
+    """Get daily manpower summary with optional filters"""
+    query = DailyManpower.query
+    
+    if start_date:
+        query = query.filter(DailyManpower.date >= start_date)
+    if end_date:
+        query = query.filter(DailyManpower.date <= end_date)
+    if job_site:
+        query = query.filter_by(job_site=job_site)
+    if subcontractor:
+        query = query.filter_by(subcontractor=subcontractor)
+    
+    return query.order_by(DailyManpower.date.desc()).all()
+
+def get_cumulative_manpower_totals(start_date=None, end_date=None, job_site=None, subcontractor=None):
+    """Calculate cumulative days worked per subcontractor (1 day per date regardless of number of workers)"""
+    query = DailyManpower.query
+    
+    if start_date:
+        query = query.filter(DailyManpower.date >= start_date)
+    if end_date:
+        query = query.filter(DailyManpower.date <= end_date)
+    if job_site:
+        query = query.filter_by(job_site=job_site)
+    if subcontractor:
+        query = query.filter_by(subcontractor=subcontractor)
+    
+    # Group by subcontractor and date, then count distinct dates
+    totals = db.session.query(
+        DailyManpower.subcontractor,
+        func.count(distinct(DailyManpower.date)).label('total_days')
+    ).group_by(DailyManpower.subcontractor).all()
+    
+    return {record.subcontractor: record.total_days for record in totals}
 
 @app.route("/admin/export")
 def admin_export():
@@ -465,6 +614,64 @@ def qr_clock_in():
     flash(f"Successfully clocked in! Your code is: <b>{code}</b>", "success")
     return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
 
+def sync_to_procore(shift):
+    """Sync completed shift data to Procore"""
+    if not all([PROCORE_CLIENT_ID, PROCORE_CLIENT_SECRET, PROCORE_COMPANY_ID]):
+        print("Procore credentials not configured")
+        return
+    
+    # Get project ID for the job site
+    project_id = PROCORE_PROJECT_MAP.get(shift.job_site)
+    if not project_id:
+        print(f"No Procore project ID mapping found for job site: {shift.job_site}")
+        return
+
+    try:
+        # Get access token
+        token_url = "https://api.procore.com/oauth/token"
+        token_data = {
+            "grant_type": "client_credentials",
+            "client_id": PROCORE_CLIENT_ID,
+            "client_secret": PROCORE_CLIENT_SECRET
+        }
+        token_response = requests.post(token_url, data=token_data)
+        token_response.raise_for_status()
+        access_token = token_response.json()["access_token"]
+
+        # Calculate hours from working time
+        try:
+            time_parts = shift.working_time.split()
+            hours = float(time_parts[0].replace('h', ''))
+            minutes = float(time_parts[1].replace('m', '')) if len(time_parts) > 1 else 0
+            total_hours = hours + (minutes / 60)
+        except (ValueError, IndexError, AttributeError):
+            print(f"Error parsing working time: {shift.working_time}")
+            return
+
+        # Prepare manpower data
+        manpower_data = {
+            "manpower_log": {
+                "date": shift.clock_in.strftime("%Y-%m-%d"),
+                "vendor": shift.subcontractor,
+                "workers": 1,
+                "hours": round(total_hours, 2),
+                "notes": f"Worker: {shift.name}\nClock In: {shift.clock_in.strftime('%I:%M %p')}\nClock Out: {shift.clock_out.strftime('%I:%M %p')}"
+            }
+        }
+
+        # Send data to Procore
+        api_url = f"https://api.procore.com/rest/v1.0/projects/{project_id}/manpower_logs"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        response = requests.post(api_url, json=manpower_data, headers=headers)
+        response.raise_for_status()
+        print(f"Successfully synced shift data to Procore for {shift.name}")
+
+    except requests.exceptions.RequestException as e:
+        print(f"Error syncing to Procore: {e}")
+
 @app.route("/qr_clock_out", methods=["POST"])
 def qr_clock_out():
     """Handle clock out via QR code"""
@@ -474,6 +681,7 @@ def qr_clock_out():
     if not code or not job_site or not batch_id:
         flash("Please enter your code.", "error")
         return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
+    
     # Find shift (prefer batch_id, fallback to old logic for backward compatibility)
     shift = Shift.query.filter_by(code=code, job_site=job_site, clock_out=None, qr_batch_id=batch_id).first()
     if not shift:
@@ -482,11 +690,13 @@ def qr_clock_out():
     if not shift:
         flash("Code not found or already clocked out.", "error")
         return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
+    
     # Clock out
     now = datetime.now()
     clock_in_dt = shift.clock_in
     clock_out_dt = now
     total_time = clock_out_dt - clock_in_dt
+    
     # Calculate breaks
     breaks = Break.query.filter_by(shift_code=code).all()
     total_break = 0
@@ -504,7 +714,20 @@ def qr_clock_out():
     shift.working_time = format_seconds(working_time)
     shift.breaks = breaks_str
     db.session.commit()
-    flash(f"Successfully clocked out! Working time: <b>{format_seconds(working_time)}</b>", "success")
+
+    # Update tracking
+    update_subcontractor_history(shift)
+    update_daily_manpower(shift)
+
+    # Sync to Procore if configured
+    sync_to_procore(shift)
+
+    flash(
+        f"Shift complete!<br>"
+        f"Total time: <b>{format_seconds(total_time.total_seconds())}</b><br>"
+        f"Actual working time: <b>{format_seconds(working_time)}</b>",
+        "success"
+    )
     return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
 
 @app.route('/add_subcontractor_column')
@@ -522,6 +745,16 @@ def add_qr_batch_id_column():
         db.session.execute(text("ALTER TABLE shift ADD COLUMN qr_batch_id VARCHAR(64);"))
         db.session.commit()
         return "qr_batch_id column added!"
+    except Exception as e:
+        return f"Error: {e}"
+
+@app.route('/add_daily_manpower_table')
+def add_daily_manpower_table():
+    """Add the daily manpower tracking table"""
+    try:
+        with app.app_context():
+            db.create_all()
+        return "Daily manpower table added successfully!"
     except Exception as e:
         return f"Error: {e}"
 
