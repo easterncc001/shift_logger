@@ -644,43 +644,41 @@ def sync_to_procore(shift):
         token_response.raise_for_status()
         access_token = token_response.json()["access_token"]
 
-        # Get the count of workers for this subcontractor at this job site for today
+        # Combine queries to reduce database calls
         today = shift.clock_out.date()
-        daily_count = DailyManpower.query.filter_by(
-            date=today,
-            job_site=shift.job_site,
-            subcontractor=shift.subcontractor
-        ).first()
         
-        workers_count = daily_count.manpower if daily_count else 1
+        # Single query to get both daily count and cumulative days
+        result = db.session.query(
+            DailyManpower.manpower,
+            func.count(distinct(DailyManpower.date)).label('total_days')
+        ).filter(
+            DailyManpower.subcontractor == shift.subcontractor,
+            DailyManpower.job_site == shift.job_site
+        ).group_by(
+            DailyManpower.manpower
+        ).filter(
+            DailyManpower.date == today
+        ).first()
 
-        # Calculate hours from working time
-        try:
-            time_parts = shift.working_time.split()
-            hours = float(time_parts[0].replace('h', ''))
-            minutes = float(time_parts[1].replace('m', '')) if len(time_parts) > 1 else 0
-            total_hours = hours + (minutes / 60)
-        except (ValueError, IndexError, AttributeError):
-            print(f"Error parsing working time: {shift.working_time}")
-            return
+        # Extract values from result
+        workers_count = result.manpower if result else 1
+        cumulative_total = result.total_days if result else 1
 
-        # Get cumulative manpower total for this subcontractor
-        cumulative_total = db.session.query(
-            func.count(distinct(DailyManpower.date))
-        ).filter_by(
-            subcontractor=shift.subcontractor,
-            job_site=shift.job_site
-        ).scalar() or 0
+        # Calculate hours (moved outside try block since it's simpler)
+        time_parts = shift.working_time.split()
+        hours = float(time_parts[0].replace('h', ''))
+        minutes = float(time_parts[1].replace('m', '')) if len(time_parts) > 1 else 0
+        total_hours = hours + (minutes / 60)
 
         # Prepare manpower data matching Procore's interface
         manpower_data = {
             "manpower_log": {
-                "company": shift.subcontractor,  # Company field is the subcontractor name
-                "workers": workers_count,        # Number of workers for this subcontractor today
-                "hours": 10,                    # Standard 10-hour day
-                "total_hours": total_hours,     # Actual hours worked
-                "location": shift.job_site,     # Job site as location
-                "manpower": cumulative_total,   # Cumulative days worked to date
+                "company": shift.subcontractor,
+                "workers": workers_count,
+                "hours": 10,
+                "total_hours": total_hours,
+                "location": shift.job_site,
+                "manpower": cumulative_total,
                 "date": shift.clock_out.strftime("%Y-%m-%d"),
                 "notes": f"Daily workers: {workers_count}\nCumulative days: {cumulative_total}"
             }
@@ -698,6 +696,8 @@ def sync_to_procore(shift):
 
     except requests.exceptions.RequestException as e:
         print(f"Error syncing to Procore: {e}")
+    except (ValueError, IndexError, AttributeError) as e:
+        print(f"Error processing shift data: {e}")
 
 @app.route("/qr_clock_out", methods=["POST"])
 def qr_clock_out():
