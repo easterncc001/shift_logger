@@ -142,11 +142,11 @@
         
         <!-- Filter Section -->
         <div class="filter-section">
-            <form method="get">
+            <form method="GET">
                 <select name="subcontractor">
                     <option value="">All Subcontractors</option>
-                    {% for subcontractor in subcontractors %}
-                    <option value="{{ subcontractor }}" {% if selected_subcontractor == subcontractor %}selected{% endif %}>{{ subcontractor }}</option>
+                    {% for sub in subcontractors %}
+                    <option value="{{ sub }}" {% if selected_subcontractor == sub %}selected{% endif %}>{{ sub }}</option>
                     {% endfor %}
                 </select>
                 <select name="job_site">
@@ -155,82 +155,11 @@
                     <option value="{{ site }}" {% if selected_job_site == site %}selected{% endif %}>{{ site }}</option>
                     {% endfor %}
                 </select>
-                <input type="date" name="start_date" value="{{ start_date.strftime('%Y-%m-%d') if start_date else '' }}" placeholder="Start Date">
-                <input type="date" name="end_date" value="{{ end_date.strftime('%Y-%m-%d') if end_date else '' }}" placeholder="End Date">
                 <button type="submit" class="export-btn">Filter</button>
-                {% if selected_subcontractor or selected_job_site or start_date or end_date %}
+                {% if selected_subcontractor or selected_job_site %}
                 <a href="{{ url_for('admin_view') }}" class="export-btn" style="background: #6c757d;">Clear Filters</a>
                 {% endif %}
             </form>
-        </div>
-
-        <!-- Cumulative Days Worked -->
-        <div class="summary-section">
-            <h2>Cumulative Days Worked</h2>
-            <table class="summary-table">
-                <thead>
-                    <tr>
-                        <th>Subcontractor</th>
-                        <th>Total Days</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for subcontractor, days in cumulative_totals.items() %}
-                    <tr>
-                        <td>{{ subcontractor }}</td>
-                        <td>{{ days }}</td>
-                    </tr>
-                    {% endfor %}
-                    <tr class="daily-summary">
-                        <td style="text-align: right;"><strong>Grand Total Days:</strong></td>
-                        <td class="daily-total">{{ cumulative_totals.values()|sum }}</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-
-        <!-- Daily Manpower Section -->
-        <div class="summary-section">
-            <h2>Daily Manpower Summary</h2>
-            <table class="summary-table">
-                <thead>
-                    <tr>
-                        <th>Date</th>
-                        <th>Job Site</th>
-                        <th>Subcontractor</th>
-                        <th>Daily Manpower</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% set current_date = None %}
-                    {% set daily_total = 0 %}
-                    {% for record in daily_manpower %}
-                        {% if current_date != record.date %}
-                            {% if current_date is not none %}
-                                <tr class="daily-summary">
-                                    <td colspan="3" style="text-align: right;"><strong>Total for {{ current_date }}:</strong></td>
-                                    <td class="daily-total">{{ daily_total }}</td>
-                                </tr>
-                            {% endif %}
-                            {% set current_date = record.date %}
-                            {% set daily_total = 0 %}
-                        {% endif %}
-                        {% set daily_total = daily_total + record.manpower %}
-                        <tr>
-                            <td>{{ record.date.strftime('%Y-%m-%d') }}</td>
-                            <td>{{ record.job_site }}</td>
-                            <td>{{ record.subcontractor }}</td>
-                            <td>{{ record.manpower }}</td>
-                        </tr>
-                        {% if loop.last %}
-                            <tr class="daily-summary">
-                                <td colspan="3" style="text-align: right;"><strong>Total for {{ current_date }}:</strong></td>
-                                <td class="daily-total">{{ daily_total }}</td>
-                            </tr>
-                        {% endif %}
-                    {% endfor %}
-                </tbody>
-            </table>
         </div>
 
         <!-- Summary Section -->
