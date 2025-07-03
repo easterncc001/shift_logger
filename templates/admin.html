@@ -234,51 +234,61 @@
         </div>
 
         <!-- Summary Section -->
-        <div class="summary-section">
-            <h2>Subcontractor Total Days Summary</h2>
-            <table class="summary-table">
-                <thead>
-                    <tr>
-                        <th>Subcontractor</th>
-                        <th>Total Days Worked</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for subcontractor, days in subcontractor_days.items() %}
-                    <tr>
-                        <td>{{ subcontractor }}</td>
-                        <td>{{ days }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+        <div class="card mb-4">
+            <div class="card-header">
+                <h2>Subcontractor Total Days Summary</h2>
+            </div>
+            <div class="card-body">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Subcontractor</th>
+                            <th>Total Days Worked</th>
+                            <th>Total Hours Worked</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for subcontractor, stats in subcontractor_stats.items() %}
+                        <tr>
+                            <td>{{ subcontractor }}</td>
+                            <td>{{ stats.days }}</td>
+                            <td>{{ "%.1f"|format(stats.hours) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
 
-        <!-- Subcontractor History Section -->
-        <div class="summary-section history-table">
-            <h2>Subcontractor Project History</h2>
-            <table class="summary-table">
-                <thead>
-                    <tr>
-                        <th>Subcontractor</th>
-                        <th>Job Site</th>
-                        <th>First Day</th>
-                        <th>Last Day</th>
-                        <th>Total Days</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for history in histories %}
-                    <tr>
-                        <td>{{ history.subcontractor }}</td>
-                        <td>{{ history.job_site }}</td>
-                        <td>{{ history.first_day.strftime('%Y-%m-%d') }}</td>
-                        <td>{{ history.last_day.strftime('%Y-%m-%d') }}</td>
-                        <td>{{ history.total_days }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+        <!-- Project History -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h2>Subcontractor Project History</h2>
+            </div>
+            <div class="card-body">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Subcontractor</th>
+                            <th>Job Site</th>
+                            <th>First Day</th>
+                            <th>Last Day</th>
+                            <th>Manpower</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for history in histories %}
+                        <tr>
+                            <td>{{ history.subcontractor }}</td>
+                            <td>{{ history.job_site }}</td>
+                            <td>{{ history.first_day.strftime('%Y-%m-%d') }}</td>
+                            <td>{{ history.last_day.strftime('%Y-%m-%d') }}</td>
+                            <td>{{ history.manpower }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
 
         <!-- Export Section -->
