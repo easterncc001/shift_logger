@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Edit Shift</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Edit Shift</h1>
+        <form method="post">
+            <div class="input-group">
+                <label>Clock In:</label>
+                <input type="datetime-local" name="clock_in" value="{{ shift.clock_in.strftime('%Y-%m-%dT%H:%M') }}" required>
+            </div>
+            <div class="input-group">
+                <label>Clock Out:</label>
+                <input type="datetime-local" name="clock_out" value="{{ shift.clock_out.strftime('%Y-%m-%dT%H:%M') if shift.clock_out else '' }}">
+            </div>
+            <div class="actions">
+                <button type="submit" class="btn btn-primary">Save</button>
+                <a href="{{ url_for('admin_view') }}" class="btn btn-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</body>
+</html> 
