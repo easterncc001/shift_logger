@@ -258,6 +258,7 @@
                             <th>Total Time</th>
                             <th>Working Time</th>
                             <th>Breaks</th>
+                            <th>Code</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -272,12 +273,11 @@
                             <td>{{ shift.total_time if shift.total_time else "N/A" }}</td>
                             <td>{{ shift.working_time if shift.working_time else "N/A" }}</td>
                             <td>{{ shift.breaks if shift.breaks else "No breaks" }}</td>
+                            <td>{{ shift.code }}</td>
                             <td>
-                                {% if shift.clock_out %}
                                 <form action="{{ url_for('admin_delete_shift', shift_id=shift.id) }}" method="POST" style="display: inline;">
                                     <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure you want to delete this shift?')">Delete</button>
                                 </form>
-                                {% endif %}
                             </td>
                         </tr>
                         {% endfor %}
