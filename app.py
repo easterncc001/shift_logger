@@ -612,17 +612,14 @@ def qr_scan():
     batch_id = request.args.get('batch')
     timestamp = request.args.get('t')
     
-    # Validate batch_id and timestamp
+    # Validate batch_id
     if not batch_id:
         return "Invalid QR code (missing batch ID).", 400
-    # Check if any active shifts exist for this job site and batch_id
+    
     job_site = get_job_site_from_id(site_id)
     if not job_site:
         return "Invalid job site.", 400
-    any_shifts = Shift.query.filter_by(job_site=job_site, qr_batch_id=batch_id).count()
-    active_shifts = Shift.query.filter_by(job_site=job_site, qr_batch_id=batch_id, clock_out=None).count()
-    if any_shifts > 0 and active_shifts == 0:
-        return "QR code expired. Please get a new QR code.", 400
+    
     return render_template("qr_scan.html", job_site=job_site, batch_id=batch_id)
 
 @app.route("/qr_clock_in", methods=["POST"])
@@ -632,17 +629,20 @@ def qr_clock_in():
     subcontractor = request.form.get("subcontractor", "").strip()
     job_site = request.form.get("job_site", "")
     batch_id = request.args.get('batch') or request.form.get('batch_id')
+    
     if not name or not subcontractor or not job_site or not batch_id:
         flash("Please fill in all fields.", "error")
         return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
-    # Check if already clocked in
-    existing_shift = Shift.query.filter_by(name=name, subcontractor=subcontractor, job_site=job_site, clock_out=None, qr_batch_id=batch_id).first()
+    
+    # Check if already clocked in at any job site
+    existing_shift = Shift.query.filter_by(name=name, subcontractor=subcontractor, clock_out=None).first()
     if existing_shift:
-        flash("You are already clocked in at this job site.", "error")
+        flash(f"You are already clocked in at job site: {existing_shift.job_site}.", "error")
         return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
+    
     # Clock in
     now = datetime.now()
-    code = generate_code()
+    code = get_or_create_code(name, subcontractor)
     shift = Shift(name=name, subcontractor=subcontractor, job_site=job_site, clock_in=now, code=code, qr_batch_id=batch_id)
     db.session.add(shift)
     db.session.commit()
@@ -659,15 +659,13 @@ def qr_clock_out():
     code = request.form.get("code", "").strip()
     job_site = request.form.get("job_site", "")
     batch_id = request.args.get('batch') or request.form.get('batch_id')
+    
     if not code or not job_site or not batch_id:
         flash("Please enter your code.", "error")
         return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
     
-    # Find shift (prefer batch_id, fallback to old logic for backward compatibility)
-    shift = Shift.query.filter_by(code=code, job_site=job_site, clock_out=None, qr_batch_id=batch_id).first()
-    if not shift:
-        # Fallback: try without batch_id for old shifts
-        shift = Shift.query.filter_by(code=code, job_site=job_site, clock_out=None).first()
+    # Find shift by code and job site
+    shift = Shift.query.filter_by(code=code, job_site=job_site, clock_out=None).first()
     if not shift:
         flash("Code not found or already clocked out.", "error")
         return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
@@ -824,6 +822,16 @@ def admin_edit_shift(shift_id):
             flash('Invalid date/time format.', 'error')
 
     return render_template('edit_shift.html', shift=shift)
+
+@app.route("/admin/qr_codes/print/<job_site>/<action>")
+def print_qr_code(job_site, action):
+    batches = load_qr_batches()
+    key = f"{job_site}::{action}"
+    batch_id = batches.get(key)
+    if not batch_id:
+        return "QR code not found.", 404
+    qr_image, timestamp, qr_url = generate_qr_code(job_site, batch_id, action=action)
+    return render_template("print_qr.html", job_site=job_site, action=action, qr_image=qr_image, batch_id=batch_id)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
