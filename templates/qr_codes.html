@@ -116,7 +116,7 @@
                         <img src="data:image/png;base64,{{ qr.image }}" alt="QR Code for {{ job_site }} ({{ action }})">
                         <p>Batch ID: <span class="batch-id">{{ qr.batch_id }}</span></p>
                         <button class="refresh-btn btn btn-sm btn-primary" data-job-site="{{ job_site }}" data-action="{{ action }}">Refresh</button>
-                        <a href="{{ qr.url }}" target="_blank" class="btn btn-sm btn-secondary">Print</a>
+                        <a href="{{ url_for('print_qr_code', job_site=job_site, action=action) }}" target="_blank" class="btn btn-sm btn-secondary">Print</a>
                     </div>
                     {% endfor %}
                 </div>
