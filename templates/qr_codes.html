@@ -71,30 +71,52 @@
 <body>
     <div class="qr-codes-container">
         <a href="{{ url_for('admin_view') }}" class="back-btn">← Back to Admin</a>
-        <h1>QR Codes for Job Sites</h1>
-        
-        <div class="instructions">
-            <h3>Instructions:</h3>
-            <ul style="text-align: left;">
-                <li>Print each QR code and place it at the entrance of the corresponding job site</li>
-                <li>Workers scan the QR code to clock in/out</li>
-                <li>QR codes remain valid until everyone who used them to clock in has clocked out</li>
-                <li>Generate new QR codes whenever you want to start a new attendance batch</li>
-            </ul>
-        </div>
-        
-        <div class="qr-grid">
-            {% for job_site, qr_data in qr_codes.items() %}
-            <div class="qr-card">
+        <h1>Manage QR Codes</h1>
+        <button id="refresh-all" class="btn btn-warning">Refresh All QR Codes</button>
+        <br><br>
+        <div id="qr-codes-container">
+            {% for job_site, actions in qr_codes.items() %}
+            <div class="qr-job-site">
                 <h3>{{ job_site }}</h3>
-                <img src="data:image/png;base64,{{ qr_data.image }}" alt="QR Code for {{ job_site }}" class="qr-image">
-                <div class="qr-url">{{ qr_data.url }}</div>
-                <p style="font-size: 0.8em; color: #666; margin-top: 10px;">
-                    Generated: {{ qr_data.timestamp }}
-                </p>
+                <div class="qr-actions">
+                    {% for action, qr in actions.items() %}
+                    <div class="qr-action">
+                        <h4>{{ action|capitalize }}</h4>
+                        <img src="data:image/png;base64,{{ qr.image }}" alt="QR Code for {{ job_site }} ({{ action }})">
+                        <p>Batch ID: <span class="batch-id">{{ qr.batch_id }}</span></p>
+                        <button class="refresh-btn btn btn-sm btn-primary" data-job-site="{{ job_site }}" data-action="{{ action }}">Refresh</button>
+                        <a href="{{ qr.url }}" target="_blank" class="btn btn-sm btn-secondary">Print</a>
+                    </div>
+                    {% endfor %}
+                </div>
             </div>
+            <hr>
             {% endfor %}
         </div>
     </div>
+    <script>
+    function updateQr(jobSite, action, data) {
+        const container = document.querySelector(`[data-job-site='${jobSite}'][data-action='${action}']`).parentElement;
+        container.querySelector('img').src = 'data:image/png;base64,' + data.image;
+        container.querySelector('.batch-id').textContent = data.batch_id;
+        container.querySelector('a').href = data.url;
+    }
+
+    document.querySelectorAll('.refresh-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const jobSite = this.getAttribute('data-job-site');
+            const action = this.getAttribute('data-action');
+            fetch(`/admin/qr_codes/refresh/${encodeURIComponent(jobSite)}/${action}`)
+                .then(r => r.json())
+                .then(data => updateQr(jobSite, action, data));
+        });
+    });
+
+    document.getElementById('refresh-all').addEventListener('click', function() {
+        fetch('/admin/qr_codes/refresh_all')
+            .then(r => r.json())
+            .then(() => window.location.reload());
+    });
+    </script>
 </body>
 </html> 
