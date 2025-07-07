@@ -161,10 +161,10 @@ def index():
                 flash("Please select a job site.", "error")
                 return redirect(url_for("index"))
             
-            # Check if already clocked in
-            existing_shift = Shift.query.filter_by(name=name, subcontractor=subcontractor, job_site=job_site, clock_out=None).first()
+            # Check if already clocked in at any job site
+            existing_shift = Shift.query.filter_by(name=name, subcontractor=subcontractor, clock_out=None).first()
             if existing_shift:
-                flash("You are already clocked in at this job site.", "error")
+                flash(f"You are already clocked in at job site: {existing_shift.job_site}.", "error")
                 return redirect(url_for("index"))
             
             code = get_or_create_code(name, subcontractor)
@@ -263,10 +263,10 @@ def index():
                 flash("Code not found. If you're a new worker please use the New Worker form.", "error")
                 return redirect(url_for("index"))
 
-            # Check already clocked in at this site
-            active = Shift.query.filter_by(name=reference_shift.name, subcontractor=reference_shift.subcontractor, job_site=job_site, clock_out=None).first()
+            # Check already clocked in at any job site
+            active = Shift.query.filter_by(name=reference_shift.name, subcontractor=reference_shift.subcontractor, clock_out=None).first()
             if active:
-                flash("You are already clocked in at this job site.", "error")
+                flash(f"You are already clocked in at job site: {active.job_site}.", "error")
                 return redirect(url_for("index"))
 
             shift = Shift(
