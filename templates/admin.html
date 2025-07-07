@@ -123,6 +123,22 @@
             font-weight: bold;
             color: #28a745;
         }
+        .card {
+            background:white;
+            border-radius:8px;
+            margin:20px 0;
+            padding:0;
+        }
+        .card-header {
+            background:#6b8eb7;
+            color:white;
+            padding:10px 16px;
+            border-top-left-radius:8px;
+            border-top-right-radius:8px;
+        }
+        .card-body {
+            padding:16px;
+        }
     </style>
 </head>
 <body>
@@ -168,7 +184,7 @@
                 <h2>Subcontractor Total Days Summary</h2>
             </div>
             <div class="card-body">
-                <table class="table">
+                <table class="summary-table">
                     <thead>
                         <tr>
                             <th>Subcontractor</th>
@@ -181,7 +197,7 @@
                         <tr>
                             <td>{{ subcontractor }}</td>
                             <td>{{ stats.days }}</td>
-                            <td>{{ "%.1f"|format(stats.hours) }}</td>
+                            <td>{{ "%.2f"|format(stats.hours) }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -195,7 +211,7 @@
                 <h2>Subcontractor Project History</h2>
             </div>
             <div class="card-body">
-                <table class="table">
+                <table class="summary-table">
                     <thead>
                         <tr>
                             <th>Subcontractor</th>
@@ -231,7 +247,7 @@
                 <h2>Recent Shifts</h2>
             </div>
             <div class="card-body">
-                <table class="table">
+                <table class="data-table">
                     <thead>
                         <tr>
                             <th>Name</th>
