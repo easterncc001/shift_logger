@@ -27,10 +27,6 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', "EasternCC001")
 
-# Procore integration disabled
-
-
-
 db = SQLAlchemy(app)
 
 # Initialize database tables with error handling
@@ -551,17 +547,6 @@ def generate_qr_code(job_site, batch_id, timestamp=None):
     img_str = base64.b64encode(buffer.getvalue()).decode()
     return img_str, timestamp, qr_url
 
-def validate_qr_timestamp(timestamp, max_age_hours=24):
-    """Validate QR code timestamp (prevent old QR codes)"""
-    try:
-        qr_time = int(timestamp)
-        current_time = int(time.time())
-        age_hours = (current_time - qr_time) / 3600
-        
-        return age_hours <= max_age_hours
-    except (ValueError, TypeError):
-        return False
-
 def get_job_site_from_id(site_id):
     """Get job site name from site ID"""
     for site in JOB_SITES:
@@ -584,7 +569,7 @@ def qr_scan():
     if not job_site:
         return "Invalid job site.", 400
     active_shifts = Shift.query.filter_by(job_site=job_site, qr_batch_id=batch_id, clock_out=None).all()
-    if not active_shifts and not validate_qr_timestamp(timestamp):
+    if not active_shifts:
         return "QR code expired. Please get a new QR code.", 400
     return render_template("qr_scan.html", job_site=job_site, batch_id=batch_id)
 
