@@ -10,6 +10,7 @@ import hashlib
 import time
 from sqlalchemy import text
 import uuid
+from sqlalchemy import func
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your_secret_key')
