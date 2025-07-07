@@ -1,1 +1,29 @@
-
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Print QR Code - {{ job_site }} ({{ action|capitalize }})</title>
+    <style>
+        body { text-align: center; font-family: Arial, sans-serif; margin: 0; padding: 40px; }
+        .qr-container { display: inline-block; padding: 30px; border: 1px solid #eee; border-radius: 10px; background: #fff; }
+        h2 { margin-bottom: 10px; }
+        .qr-img { width: 200px; height: 200px; margin-bottom: 10px; }
+        .meta { font-size: 16px; color: #333; margin-bottom: 10px; }
+        @media print {
+            body { background: none; }
+            .qr-container { box-shadow: none; border: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="qr-container">
+        <h2>{{ job_site }}</h2>
+        <div class="meta">{{ action|capitalize }} QR Code</div>
+        <img class="qr-img" src="data:image/png;base64,{{ qr_image }}" alt="QR Code">
+        <div class="meta">Batch ID: {{ batch_id }}</div>
+    </div>
+    <script>
+        window.onload = function() { window.print(); };
+    </script>
+</body>
+</html> 
