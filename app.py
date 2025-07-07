@@ -56,6 +56,12 @@ PROCORE_PROJECT_MAP = {
     "TPO Roof Project": os.environ.get('PROCORE_TPO_ROOF_PROJECT_ID')
 }
 
+# Map subcontractor names to their Procore Directory company IDs (numeric)
+# Add more entries as you obtain the real IDs
+SUBCONTRACTOR_COMPANY_ID_MAP = {
+    "ECC": int(os.environ.get("PROCORE_COMPANY_ECC_ID", 0))  # Set env var PROCORE_COMPANY_ECC_ID
+}
+
 db = SQLAlchemy(app)
 
 # Initialize database tables with error handling
@@ -640,26 +646,30 @@ def sync_to_procore(shift):
             Shift.clock_out.isnot(None)
         ).scalar() or 1
 
-        # Calculate hours based on working_time; fallback 0
+        # Determine company_id for this subcontractor
+        company_id = SUBCONTRACTOR_COMPANY_ID_MAP.get(shift.subcontractor)
+        if not company_id:
+            print(f"No Procore company_id mapping for subcontractor '{shift.subcontractor}'. Skipping sync.")
+            return
+
+        # Calculate hours based on working_time – not required by API but kept for internal log
         try:
             time_parts = shift.working_time.split()
-            hours = float(time_parts[0].replace('h', ''))
-            minutes = float(time_parts[1].replace('m', '')) if len(time_parts) > 1 else 0
-            total_hours = round(hours + (minutes / 60), 2)
+            hours_val = float(time_parts[0].replace('h', ''))
+            minutes_val = float(time_parts[1].replace('m', '')) if len(time_parts) > 1 else 0
+            total_hours_calc = round(hours_val + (minutes_val / 60), 2)
         except Exception:
-            total_hours = 0.0
+            total_hours_calc = 0.0
 
         # Prepare manpower data matching Procore's interface
         manpower_data = {
             "manpower_log": {
-                "company": shift.subcontractor,
+                "company_id": company_id,
                 "workers": workers_count,
-                "hours": 10,  # Standard 10-hour day per worker
-                "total_hours": total_hours,
+                "hours": 10,  # hours per worker
                 "location": shift.job_site,
-                "manpower": cumulative_total,
-                "date": shift.clock_out.strftime("%Y-%m-%d"),
-                "comments": f"Daily workers: {workers_count} | Cumulative shifts: {cumulative_total}"
+                "comments": f"Daily workers: {workers_count} | Cumulative shifts: {cumulative_total} | Tot hrs: {total_hours_calc}",
+                "date": shift.clock_out.strftime("%Y-%m-%d")
             }
         }
 
@@ -667,11 +677,14 @@ def sync_to_procore(shift):
         api_url = f"https://api.procore.com/rest/v1.0/projects/{project_id}/manpower_logs"
         headers = {
             "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "X-Procore-Company-Id": PROCORE_COMPANY_ID
         }
         response = requests.post(api_url, json=manpower_data, headers=headers)
-        response.raise_for_status()
-        print(f"Successfully synced manpower data to Procore for {shift.subcontractor}")
+        if response.status_code >= 400:
+            print("Procore API error", response.status_code, response.text)
+        else:
+            print(f"Successfully synced manpower data to Procore for {shift.subcontractor}")
 
     except requests.exceptions.RequestException as e:
         print(f"Error syncing to Procore: {e}")
