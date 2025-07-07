@@ -35,9 +35,25 @@ PROCORE_COMPANY_ID = os.environ.get('PROCORE_COMPANY_ID')
 
 # Map job sites to Procore project IDs
 PROCORE_PROJECT_MAP = {
-    "2025 DC water - Washington DC 20032": os.environ.get('PROCORE_DC_WATER_PROJECT_ID'),
-    "BRWRF Phase 3 Package 1 - Ashburn 20147": os.environ.get('PROCORE_BRWRF_PROJECT_ID'),
-    # Add mappings for other job sites
+    "2025 DC water": os.environ.get('PROCORE_2025_DC_WATER_PROJECT_ID'),
+    "2503 - SAC Project": os.environ.get('PROCORE_2503_SAC_PROJECT_ID'),
+    "BRWRF Phase 3 Package 1": os.environ.get('PROCORE_BRWRF_PHASE3_PACKAGE1_ID'),
+    "DC Water Projects": os.environ.get('PROCORE_DC_WATER_PROJECTS_ID'),
+    "Envision EAUS Battery Plant": os.environ.get('PROCORE_ENVISION_EAUS_BATTERY_PLANT_ID'),
+    "HMG-Metaplant America": os.environ.get('PROCORE_HMG_METAPLANT_AMERICA_ID'),
+    "[HMMA] Stamp Shop Roof Improvement": os.environ.get('PROCORE_HMMA_STAMP_SHOP_ROOF_ID'),
+    "HYUNDAI PRODUCT CENTER OFFICE": os.environ.get('PROCORE_HYUNDAI_PRODUCT_CENTER_OFFICE_ID'),
+    "JWA22": os.environ.get('PROCORE_JWA22_ID'),
+    "[KARR] Korean Ambassador's Residence Renovation": os.environ.get('PROCORE_KARR_RESIDENCE_RENO_ID'),
+    "LGES - ALPHA Project - 1F0": os.environ.get('PROCORE_LGES_ALPHA_PROJECT_ID'),
+    "LGESMI2 EV BATTERY PLANT MAIN PROD BLDG": os.environ.get('PROCORE_LGESMI2_MAIN_BLDG_ID'),
+    "Library for ECC": os.environ.get('PROCORE_LIBRARY_FOR_ECC_ID'),
+    "Lotte Hotel Westfield, IN": os.environ.get('PROCORE_LOTTE_HOTEL_WESTFIELD_ID'),
+    "LS Cable & System Manufacturing Facility for Submarine Cable in Virgina": os.environ.get('PROCORE_LS_CABLE_FACILITY_ID'),
+    "PG World Market": os.environ.get('PROCORE_PG_WORLD_MARKET_ID'),
+    "Tift County 2025 Industrial Building": os.environ.get('PROCORE_TIFT_COUNTY_INDUSTRIAL_BLDG_ID'),
+    "Tous Les Jours (Reston)": os.environ.get('PROCORE_TOUS_LES_JOURS_ID'),
+    "TPO Roof Project": os.environ.get('PROCORE_TPO_ROOF_PROJECT_ID')
 }
 
 db = SQLAlchemy(app)
@@ -51,16 +67,25 @@ except Exception as e:
 
 # Job site timezone mapping
 JOB_SITE_TIMEZONES = {
-    "2025 DC water - Washington DC 20032": "America/New_York",
-    "BRWRF Phase 3 Package 1 - Ashburn 20147": "America/New_York", 
-    "DC Water Projects - Washington DC 20032": "America/New_York",
-    "[HMMA] Stamp Shop Roof Improvement - Montgomery, Alabama 36105": "America/Chicago",
-    "Hyundai Product Center Office - Carnesville, Georgia": "America/New_York",
-    "JWA22 - Kokomo, Indiana 46901": "America/Indiana/Indianapolis",
-    "[KARR] Korean Ambassador's Residence Renovation, NW Washington 20016": "America/New_York",
-    "LGES-ALPHA Project-1F0 - Queen Creek 85140": "America/Phoenix",
-    "LGESMI2 EV Battery Plant Main BLDG - Holland Michigan 49423": "America/Detroit",
-    "TPO Roof Project - Fairfax 22030": "America/New_York"
+    "2025 DC water": "America/New_York",
+    "2503 - SAC Project": "America/New_York",
+    "BRWRF Phase 3 Package 1": "America/New_York",
+    "DC Water Projects": "America/New_York",
+    "Envision EAUS Battery Plant": "America/Chicago",
+    "HMG-Metaplant America": "America/New_York",
+    "[HMMA] Stamp Shop Roof Improvement": "America/Chicago",
+    "HYUNDAI PRODUCT CENTER OFFICE": "America/New_York",
+    "JWA22": "America/Indiana/Indianapolis",
+    "[KARR] Korean Ambassador's Residence Renovation": "America/New_York",
+    "LGES - ALPHA Project - 1F0": "America/Phoenix",
+    "LGESMI2 EV BATTERY PLANT MAIN PROD BLDG": "America/Detroit",
+    "Library for ECC": "America/New_York",
+    "Lotte Hotel Westfield, IN": "America/Indiana/Indianapolis",
+    "LS Cable & System Manufacturing Facility for Submarine Cable in Virgina": "America/New_York",
+    "PG World Market": "America/New_York",
+    "Tift County 2025 Industrial Building": "America/New_York",
+    "Tous Les Jours (Reston)": "America/New_York",
+    "TPO Roof Project": "America/New_York"
 }
 
 def get_local_time(utc_time, job_site):
@@ -116,18 +141,7 @@ class SubcontractorProjectHistory(db.Model):
     manpower = db.Column(db.Integer, default=0)
     __table_args__ = (db.UniqueConstraint('subcontractor', 'job_site', name='uix_subcontractor_jobsite'),)
 
-JOB_SITES = [
-    "2025 DC water - Washington DC 20032",
-    "BRWRF Phase 3 Package 1 - Ashburn 20147",
-    "DC Water Projects - Washington DC 20032",
-    "[HMMA] Stamp Shop Roof Improvement - Montgomery, Alabama 36105",
-    "Hyundai Product Center Office - Carnesville, Georgia",
-    "JWA22 - Kokomo, Indiana 46901",
-    "[KARR] Korean Ambassador's Residence Renovation, NW Washington 20016",
-    "LGES-ALPHA Project-1F0 - Queen Creek 85140",
-    "LGESMI2 EV Battery Plant Main BLDG - Holland Michigan 49423",
-    "TPO Roof Project - Fairfax 22030"
-]
+JOB_SITES = list(JOB_SITE_TIMEZONES.keys())
 
 def generate_code():
     import random
@@ -636,22 +650,27 @@ def sync_to_procore(shift):
         # Combine queries to reduce database calls
         today = shift.clock_out.date()
         
-        # Single query to get both daily count and cumulative days
-        result = db.session.query(
-            DailyManpower.manpower,
-            func.count(distinct(DailyManpower.date)).label('total_days')
-        ).filter(
-            DailyManpower.subcontractor == shift.subcontractor,
-            DailyManpower.job_site == shift.job_site
-        ).group_by(
-            DailyManpower.manpower
-        ).filter(
-            DailyManpower.date == today
-        ).first()
+        # Workers on THIS date
+        workers_count = (
+            db.session.query(Shift)
+            .filter(
+                Shift.job_site == shift.job_site,
+                Shift.subcontractor == shift.subcontractor,
+                func.date(Shift.clock_out) == today
+            )
+            .count()
+        )
 
-        # Extract values from result
-        workers_count = result.manpower if result else 1
-        cumulative_total = result.total_days if result else 1
+        # Cumulative "manpower" (total finished shifts for this subcontractor on this job)
+        cumulative_total = (
+            db.session.query(Shift)
+            .filter(
+                Shift.job_site == shift.job_site,
+                Shift.subcontractor == shift.subcontractor,
+                Shift.clock_out.isnot(None)
+            )
+            .count()
+        )
 
         # Calculate hours (moved outside try block since it's simpler)
         time_parts = shift.working_time.split()
