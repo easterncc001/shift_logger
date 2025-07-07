@@ -42,19 +42,6 @@
             <div class="actions">
                 <button type="submit" name="action" value="clockin">Clock In</button>
             </div>
-            <hr style="margin: 24px 0;">
-            <div class="input-group">
-                <input type="text" name="input_code" placeholder="Enter your code to clock out, take a break, or resume">
-            </div>
-            <div class="actions">
-                <button type="submit" name="action" value="clockout">Clock Out</button>
-                <button type="submit" name="action" value="break">Break</button>
-                <button type="submit" name="action" value="resume">Resume</button>
-            </div>
-            <div style="margin-top: 10px; color: #555; font-size: 0.95em;">
-                <b>Instructions:</b> Enter your code above to clock out, take a break, or resume.<br>
-                Use the top section to clock in for a new shift.
-            </div>
         </form>
         <hr style="margin:40px 0;">
         <h2>Quick Clock In (existing code)</h2>
@@ -72,6 +59,21 @@
             </div>
             <div class="actions">
                 <button type="submit" name="action" value="quickclockin">Clock In With Code</button>
+            </div>
+        </form>
+        <hr style="margin:40px 0;">
+        <h2>Clock Out / Break / Resume</h2>
+        <form method="post">
+            <div class="input-group">
+                <input type="text" name="input_code" placeholder="Enter your code" required>
+            </div>
+            <div class="actions">
+                <button type="submit" name="action" value="clockout">Clock Out</button>
+                <button type="submit" name="action" value="break">Break</button>
+                <button type="submit" name="action" value="resume">Resume</button>
+            </div>
+            <div style="margin-top: 10px; color: #555; font-size: 0.95em;">
+                Enter your code to clock out, take a break, or resume.
             </div>
         </form>
         <div class="export-section" style="text-align: center;">
