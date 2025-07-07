@@ -321,15 +321,13 @@ def admin_view():
             query = query.filter_by(job_site=job_site_filter)
         shifts = query.order_by(Shift.created_at.desc()).all()
         
-        # Get project history dynamically
-        histories = build_project_history()
+        # Get project history and summary with filters
+        histories = build_project_history(subcontractor=subcontractor_filter or None, job_site=job_site_filter or None)
+        subcontractor_stats = calculate_subcontractor_days(subcontractor=subcontractor_filter or None, job_site=job_site_filter or None)
         
         # Get unique subcontractors and job sites for filters
         subcontractors = [row[0] for row in db.session.query(Shift.subcontractor).distinct().all()]
         job_sites = [row[0] for row in db.session.query(Shift.job_site).distinct().all()]
-        
-        # Calculate total days and hours worked
-        subcontractor_stats = calculate_subcontractor_days()
         
         close_overdue_shifts()
         
@@ -345,34 +343,31 @@ def admin_view():
             format_time_for_display=format_time_for_display
         )
     except Exception as e:
-        print(f"Admin view error: {str(e)}")  # This will show in your server logs
-        db.session.rollback()  # Roll back any failed transactions
-        return f"An error occurred: {str(e)}", 500  # Return error to browser
+        flash(f"Admin view error: {e}", "error")
+        return render_template("admin_login.html")
 
-def calculate_subcontractor_days():
-    """Calculate days worked and total hours for each subcontractor"""
+def calculate_subcontractor_days(subcontractor=None, job_site=None):
+    """Calculate days worked and total hours for each subcontractor, with optional filters"""
     subcontractor_stats = {}
-    
-    # Get all completed shifts
-    completed_shifts = Shift.query.filter(Shift.clock_out.isnot(None)).all()
-    
+    query = Shift.query.filter(Shift.clock_out.isnot(None))
+    if subcontractor:
+        query = query.filter_by(subcontractor=subcontractor)
+    if job_site:
+        query = query.filter_by(job_site=job_site)
+    completed_shifts = query.all()
     for shift in completed_shifts:
         if shift.subcontractor not in subcontractor_stats:
             subcontractor_stats[shift.subcontractor] = {
                 'days': 0,
                 'hours': 0.0
             }
-        # Count 1 day for each completed shift
         subcontractor_stats[shift.subcontractor]['days'] += 1
-        
-        # Calculate hours from working_time
         if shift.working_time:
             time_parts = shift.working_time.split()
             hours = float(time_parts[0].replace('h', ''))
             minutes = float(time_parts[1].replace('m', '')) if len(time_parts) > 1 else 0
             total_hours = hours + (minutes / 60)
             subcontractor_stats[shift.subcontractor]['hours'] += total_hours
-            
     return subcontractor_stats
 
 def update_subcontractor_history(shift):
@@ -446,37 +441,27 @@ def get_cumulative_manpower_totals(start_date=None, end_date=None, job_site=None
 def admin_export():
     if not session.get("admin_authenticated"):
         return redirect(url_for("admin_view"))
-    shifts = Shift.query.order_by(Shift.created_at.desc()).all()
+    # Get the filtered project history (use current filters if present)
+    subcontractor_filter = request.args.get('subcontractor', '')
+    job_site_filter = request.args.get('job_site', '')
+    histories = build_project_history(subcontractor=subcontractor_filter or None, job_site=job_site_filter or None)
     def generate():
         data = [
-            ["Name", "Subcontractor", "Job Site", "Working Time", "Days Worked", "Code"]
+            ["Subcontractor", "Job Site", "First Day", "Last Day", "Manpower"]
         ]
-        for s in shifts:
-            # Calculate days worked
-            days_worked = 0
-            if s.working_time:
-                try:
-                    time_parts = s.working_time.split()
-                    hours = int(time_parts[0].replace('h', ''))
-                    minutes = int(time_parts[1].replace('m', '')) if len(time_parts) > 1 else 0
-                    total_hours = hours + (minutes / 60)
-                    days_worked = total_hours / 8
-                except (ValueError, IndexError):
-                    pass
-            
+        for h in histories:
             data.append([
-                s.name, 
-                s.subcontractor,
-                s.job_site,
-                s.working_time or '',
-                f"{days_worked:.2f}",
-                s.code
+                h.subcontractor,
+                h.job_site,
+                h.first_day.strftime('%Y-%m-%d'),
+                h.last_day.strftime('%Y-%m-%d'),
+                h.manpower
             ])
         output = ''
         for row in data:
             output += ','.join(f'"{str(cell)}"' for cell in row) + '\n'
         return output
-    return Response(generate(), mimetype='text/csv', headers={"Content-Disposition": "attachment;filename=shifts_export.csv"})
+    return Response(generate(), mimetype='text/csv', headers={"Content-Disposition": "attachment;filename=subcontractor_project_history.csv"})
 
 @app.route("/admin/logout")
 def admin_logout():
@@ -766,14 +751,19 @@ def check_tables():
     except Exception as e:
         return f"Database error: {str(e)}"
 
-def build_project_history():
-    records = db.session.query(
+def build_project_history(subcontractor=None, job_site=None):
+    query = db.session.query(
         Shift.subcontractor,
         Shift.job_site,
         func.min(Shift.clock_in).label('first_day'),
         func.max(Shift.clock_out).label('last_day'),
         func.count(Shift.id).label('manpower')
-    ).filter(Shift.clock_out.isnot(None)).group_by(Shift.subcontractor, Shift.job_site).all()
+    ).filter(Shift.clock_out.isnot(None))
+    if subcontractor:
+        query = query.filter(Shift.subcontractor == subcontractor)
+    if job_site:
+        query = query.filter(Shift.job_site == job_site)
+    records = query.group_by(Shift.subcontractor, Shift.job_site).all()
     return records
 
 def close_overdue_shifts(max_hours: int = 24):
