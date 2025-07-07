@@ -100,6 +100,7 @@ class Shift(db.Model):
     code = db.Column(db.String(16), unique=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     qr_batch_id = db.Column(db.String(64))  # New column for QR batch ID
+    flagged = db.Column(db.Boolean, default=False)  # Auto-closed or problematic shift
 
 class Break(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -144,6 +145,7 @@ def format_seconds(secs):
 
 @app.route("/", methods=["GET", "POST"])
 def index():
+    close_overdue_shifts()
     if request.method == "POST":
         action = request.form.get("action")
         now = datetime.now()
@@ -331,6 +333,8 @@ def admin_view():
         
         # Calculate total days and hours worked
         subcontractor_stats = calculate_subcontractor_days()
+        
+        close_overdue_shifts()
         
         return render_template(
             "admin.html", 
@@ -736,6 +740,53 @@ def build_project_history():
         func.count(Shift.id).label('manpower')
     ).filter(Shift.clock_out.isnot(None)).group_by(Shift.subcontractor, Shift.job_site).all()
     return records
+
+def close_overdue_shifts(max_hours: int = 24):
+    """Auto-close any open shift older than max_hours and flag it."""
+    cutoff = datetime.utcnow() - timedelta(hours=max_hours)
+    overdue_shifts = Shift.query.filter(Shift.clock_out.is_(None), Shift.clock_in < cutoff).all()
+    for s in overdue_shifts:
+        s.clock_out = s.clock_in + timedelta(hours=max_hours)
+        s.total_time = format_seconds(max_hours * 3600)
+        s.working_time = s.total_time
+        s.breaks = "AUTO-CLOSED"
+        s.flagged = True
+    if overdue_shifts:
+        db.session.commit()
+
+@app.route('/add_flagged_column')
+def add_flagged_column():
+    try:
+        db.session.execute(text("ALTER TABLE shift ADD COLUMN flagged BOOLEAN DEFAULT FALSE;"))
+        db.session.commit()
+        return "flagged column added"
+    except Exception as e:
+        return str(e)
+
+@app.route('/admin/edit/<int:shift_id>', methods=['GET', 'POST'])
+def admin_edit_shift(shift_id):
+    if not session.get("admin_authenticated"):
+        return redirect(url_for('admin_view'))
+
+    shift = Shift.query.get_or_404(shift_id)
+
+    if request.method == 'POST':
+        try:
+            clock_in_str = request.form.get('clock_in')
+            clock_out_str = request.form.get('clock_out')
+            shift.clock_in = datetime.strptime(clock_in_str, '%Y-%m-%dT%H:%M')
+            if clock_out_str:
+                shift.clock_out = datetime.strptime(clock_out_str, '%Y-%m-%dT%H:%M')
+                duration = (shift.clock_out - shift.clock_in).total_seconds()
+                shift.total_time = format_seconds(duration)
+                shift.working_time = shift.total_time
+            db.session.commit()
+            flash('Shift updated.', 'success')
+            return redirect(url_for('admin_view'))
+        except ValueError:
+            flash('Invalid date/time format.', 'error')
+
+    return render_template('edit_shift.html', shift=shift)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
