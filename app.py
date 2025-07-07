@@ -29,12 +29,7 @@ ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', "EasternCC001")
 
 # Procore integration disabled
 
-# Map job sites to Procore project IDs
-PROCORE_PROJECT_MAP = {}
 
-# Map subcontractor names to their Procore Directory company IDs (numeric)
-# Add more entries as you obtain the real IDs
-SUBCONTRACTOR_COMPANY_ID_MAP = {}
 
 db = SQLAlchemy(app)
 
@@ -131,6 +126,17 @@ def generate_code():
         if not Shift.query.filter_by(code=code).first():
             return code
 
+def get_or_create_code(name: str, subcontractor: str) -> str:
+    """Return existing persistent code for worker or create a new one."""
+    existing_shift = (
+        Shift.query.filter_by(name=name, subcontractor=subcontractor)
+        .order_by(Shift.id.asc())
+        .first()
+    )
+    if existing_shift:
+        return existing_shift.code
+    return generate_code()
+
 def format_seconds(secs):
     hours = int(secs // 3600)
     minutes = int((secs % 3600) // 60)
@@ -163,7 +169,7 @@ def index():
                 flash("You are already clocked in at this job site.", "error")
                 return redirect(url_for("index"))
             
-            code = generate_code()
+            code = get_or_create_code(name, subcontractor)
             shift = Shift(name=name, subcontractor=subcontractor, job_site=job_site, clock_in=now, code=code)
             db.session.add(shift)
             db.session.commit()
@@ -244,6 +250,37 @@ def index():
                 f"Actual working time: <b>{format_seconds(working_time)}</b>",
                 "success"
             )
+            return redirect(url_for("index"))
+
+        elif action == "quickclockin":
+            input_code = request.form.get("code", "").strip()
+            job_site = request.form.get("job_site", "")
+            if not input_code or not job_site:
+                flash("Please enter your code and select a job site.", "error")
+                return redirect(url_for("index"))
+
+            # find worker info
+            reference_shift = Shift.query.filter_by(code=input_code).first()
+            if not reference_shift:
+                flash("Code not found. If you're a new worker please use the New Worker form.", "error")
+                return redirect(url_for("index"))
+
+            # Check already clocked in at this site
+            active = Shift.query.filter_by(name=reference_shift.name, subcontractor=reference_shift.subcontractor, job_site=job_site, clock_out=None).first()
+            if active:
+                flash("You are already clocked in at this job site.", "error")
+                return redirect(url_for("index"))
+
+            shift = Shift(
+                name=reference_shift.name,
+                subcontractor=reference_shift.subcontractor,
+                job_site=job_site,
+                clock_in=datetime.now(),
+                code=input_code,
+            )
+            db.session.add(shift)
+            db.session.commit()
+            flash("Clock-in successful!", "success")
             return redirect(url_for("index"))
 
         else:
