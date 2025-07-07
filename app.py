@@ -396,30 +396,6 @@ def update_subcontractor_history(shift):
     
     db.session.commit()
 
-def update_daily_manpower(shift):
-    """Update daily manpower count when a shift is completed"""
-    shift_date = shift.clock_out.date()
-    
-    # Get or create daily manpower record
-    daily = DailyManpower.query.filter_by(
-        date=shift_date,
-        job_site=shift.job_site,
-        subcontractor=shift.subcontractor
-    ).first()
-    
-    if not daily:
-        daily = DailyManpower(
-            date=shift_date,
-            job_site=shift.job_site,
-            subcontractor=shift.subcontractor,
-            manpower=1
-        )
-        db.session.add(daily)
-    else:
-        daily.manpower += 1
-    
-    db.session.commit()
-
 def get_daily_manpower_summary(start_date=None, end_date=None, job_site=None, subcontractor=None):
     """Get daily manpower summary with optional filters"""
     query = DailyManpower.query
@@ -647,48 +623,43 @@ def sync_to_procore(shift):
         token_response.raise_for_status()
         access_token = token_response.json()["access_token"]
 
-        # Combine queries to reduce database calls
+        # Calculate workers for the day and cumulative manpower directly from Shift table
         today = shift.clock_out.date()
-        
-        # Workers on THIS date
-        workers_count = (
-            db.session.query(Shift)
-            .filter(
-                Shift.job_site == shift.job_site,
-                Shift.subcontractor == shift.subcontractor,
-                func.date(Shift.clock_out) == today
-            )
-            .count()
-        )
 
-        # Cumulative "manpower" (total finished shifts for this subcontractor on this job)
-        cumulative_total = (
-            db.session.query(Shift)
-            .filter(
-                Shift.job_site == shift.job_site,
-                Shift.subcontractor == shift.subcontractor,
-                Shift.clock_out.isnot(None)
-            )
-            .count()
-        )
+        # Workers (completed shifts) for this subcontractor at this site TODAY
+        workers_count = db.session.query(func.count(Shift.id)).filter(
+            Shift.subcontractor == shift.subcontractor,
+            Shift.job_site == shift.job_site,
+            func.date(Shift.clock_out) == today
+        ).scalar() or 1
 
-        # Calculate hours (moved outside try block since it's simpler)
-        time_parts = shift.working_time.split()
-        hours = float(time_parts[0].replace('h', ''))
-        minutes = float(time_parts[1].replace('m', '')) if len(time_parts) > 1 else 0
-        total_hours = hours + (minutes / 60)
+        # Cumulative manpower (all completed shifts to date for that subcontractor at this site)
+        cumulative_total = db.session.query(func.count(Shift.id)).filter(
+            Shift.subcontractor == shift.subcontractor,
+            Shift.job_site == shift.job_site,
+            Shift.clock_out.isnot(None)
+        ).scalar() or 1
+
+        # Calculate hours based on working_time; fallback 0
+        try:
+            time_parts = shift.working_time.split()
+            hours = float(time_parts[0].replace('h', ''))
+            minutes = float(time_parts[1].replace('m', '')) if len(time_parts) > 1 else 0
+            total_hours = round(hours + (minutes / 60), 2)
+        except Exception:
+            total_hours = 0.0
 
         # Prepare manpower data matching Procore's interface
         manpower_data = {
             "manpower_log": {
                 "company": shift.subcontractor,
                 "workers": workers_count,
-                "hours": 10,
+                "hours": 10,  # Standard 10-hour day per worker
                 "total_hours": total_hours,
                 "location": shift.job_site,
                 "manpower": cumulative_total,
                 "date": shift.clock_out.strftime("%Y-%m-%d"),
-                "notes": f"Daily workers: {workers_count}\nCumulative days: {cumulative_total}"
+                "comments": f"Daily workers: {workers_count} | Cumulative shifts: {cumulative_total}"
             }
         }
 
@@ -750,9 +721,8 @@ def qr_clock_out():
     shift.breaks = breaks_str
     db.session.commit()
 
-    # Update tracking
+    # Update project history tracking
     update_subcontractor_history(shift)
-    update_daily_manpower(shift)
 
     # Sync to Procore if configured
     sync_to_procore(shift)
