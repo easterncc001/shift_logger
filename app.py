@@ -10,8 +10,6 @@ import hashlib
 import time
 from sqlalchemy import text
 import uuid
-import requests
-from sqlalchemy import func, distinct
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your_secret_key')
@@ -28,39 +26,14 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', "EasternCC001")
 
-# Procore configuration
-PROCORE_CLIENT_ID = os.environ.get('PROCORE_CLIENT_ID')
-PROCORE_CLIENT_SECRET = os.environ.get('PROCORE_CLIENT_SECRET')
-PROCORE_COMPANY_ID = os.environ.get('PROCORE_COMPANY_ID')
+# Procore integration disabled
 
 # Map job sites to Procore project IDs
-PROCORE_PROJECT_MAP = {
-    "2025 DC water": os.environ.get('PROCORE_2025_DC_WATER_PROJECT_ID'),
-    "2503 - SAC Project": os.environ.get('PROCORE_2503_SAC_PROJECT_ID'),
-    "BRWRF Phase 3 Package 1": os.environ.get('PROCORE_BRWRF_PHASE3_PACKAGE1_ID'),
-    "DC Water Projects": os.environ.get('PROCORE_DC_WATER_PROJECTS_ID'),
-    "Envision EAUS Battery Plant": os.environ.get('PROCORE_ENVISION_EAUS_BATTERY_PLANT_ID'),
-    "HMG-Metaplant America": os.environ.get('PROCORE_HMG_METAPLANT_AMERICA_ID'),
-    "[HMMA] Stamp Shop Roof Improvement": os.environ.get('PROCORE_HMMA_STAMP_SHOP_ROOF_ID'),
-    "HYUNDAI PRODUCT CENTER OFFICE": os.environ.get('PROCORE_HYUNDAI_PRODUCT_CENTER_OFFICE_ID'),
-    "JWA22": os.environ.get('PROCORE_JWA22_ID'),
-    "[KARR] Korean Ambassador's Residence Renovation": os.environ.get('PROCORE_KARR_RESIDENCE_RENO_ID'),
-    "LGES - ALPHA Project - 1F0": os.environ.get('PROCORE_LGES_ALPHA_PROJECT_ID'),
-    "LGESMI2 EV BATTERY PLANT MAIN PROD BLDG": os.environ.get('PROCORE_LGESMI2_MAIN_BLDG_ID'),
-    "Library for ECC": os.environ.get('PROCORE_LIBRARY_FOR_ECC_ID'),
-    "Lotte Hotel Westfield, IN": os.environ.get('PROCORE_LOTTE_HOTEL_WESTFIELD_ID'),
-    "LS Cable & System Manufacturing Facility for Submarine Cable in Virgina": os.environ.get('PROCORE_LS_CABLE_FACILITY_ID'),
-    "PG World Market": os.environ.get('PROCORE_PG_WORLD_MARKET_ID'),
-    "Tift County 2025 Industrial Building": os.environ.get('PROCORE_TIFT_COUNTY_INDUSTRIAL_BLDG_ID'),
-    "Tous Les Jours (Reston)": os.environ.get('PROCORE_TOUS_LES_JOURS_ID'),
-    "TPO Roof Project": os.environ.get('PROCORE_TPO_ROOF_PROJECT_ID')
-}
+PROCORE_PROJECT_MAP = {}
 
 # Map subcontractor names to their Procore Directory company IDs (numeric)
 # Add more entries as you obtain the real IDs
-SUBCONTRACTOR_COMPANY_ID_MAP = {
-    "ECC": int(os.environ.get("PROCORE_COMPANY_ECC_ID", 0))  # Set env var PROCORE_COMPANY_ECC_ID
-}
+SUBCONTRACTOR_COMPANY_ID_MAP = {}
 
 db = SQLAlchemy(app)
 
@@ -311,16 +284,8 @@ def admin_view():
             query = query.filter_by(job_site=job_site_filter)
         shifts = query.order_by(Shift.created_at.desc()).all()
         
-        # Get subcontractor history with proper date formatting
-        history_query = SubcontractorProjectHistory.query
-        if subcontractor_filter:
-            history_query = history_query.filter_by(subcontractor=subcontractor_filter)
-        if job_site_filter:
-            history_query = history_query.filter_by(job_site=job_site_filter)
-        histories = history_query.order_by(
-            SubcontractorProjectHistory.subcontractor,
-            SubcontractorProjectHistory.job_site
-        ).all()
+        # Get project history dynamically
+        histories = build_project_history()
         
         # Get unique subcontractors and job sites for filters
         subcontractors = [row[0] for row in db.session.query(Shift.subcontractor).distinct().all()]
@@ -606,90 +571,8 @@ def qr_clock_in():
     return redirect(url_for("qr_scan", site=hashlib.md5(job_site.encode()).hexdigest()[:8], batch=batch_id, t=int(time.time())))
 
 def sync_to_procore(shift):
-    """Sync completed shift data to Procore's Manpower interface"""
-    if not all([PROCORE_CLIENT_ID, PROCORE_CLIENT_SECRET, PROCORE_COMPANY_ID]):
-        print("Procore credentials not configured")
-        return
-    
-    # Get project ID for the job site
-    project_id = PROCORE_PROJECT_MAP.get(shift.job_site)
-    if not project_id:
-        print(f"No Procore project ID mapping found for job site: {shift.job_site}")
-        return
-
-    try:
-        # Get access token
-        token_url = "https://api.procore.com/oauth/token"
-        token_data = {
-            "grant_type": "client_credentials",
-            "client_id": PROCORE_CLIENT_ID,
-            "client_secret": PROCORE_CLIENT_SECRET
-        }
-        token_response = requests.post(token_url, data=token_data)
-        token_response.raise_for_status()
-        access_token = token_response.json()["access_token"]
-
-        # Calculate workers for the day and cumulative manpower directly from Shift table
-        today = shift.clock_out.date()
-
-        # Workers (completed shifts) for this subcontractor at this site TODAY
-        workers_count = db.session.query(func.count(Shift.id)).filter(
-            Shift.subcontractor == shift.subcontractor,
-            Shift.job_site == shift.job_site,
-            func.date(Shift.clock_out) == today
-        ).scalar() or 1
-
-        # Cumulative manpower (all completed shifts to date for that subcontractor at this site)
-        cumulative_total = db.session.query(func.count(Shift.id)).filter(
-            Shift.subcontractor == shift.subcontractor,
-            Shift.job_site == shift.job_site,
-            Shift.clock_out.isnot(None)
-        ).scalar() or 1
-
-        # Determine company_id for this subcontractor
-        company_id = SUBCONTRACTOR_COMPANY_ID_MAP.get(shift.subcontractor)
-        if not company_id:
-            print(f"No Procore company_id mapping for subcontractor '{shift.subcontractor}'. Skipping sync.")
-            return
-
-        # Calculate hours based on working_time – not required by API but kept for internal log
-        try:
-            time_parts = shift.working_time.split()
-            hours_val = float(time_parts[0].replace('h', ''))
-            minutes_val = float(time_parts[1].replace('m', '')) if len(time_parts) > 1 else 0
-            total_hours_calc = round(hours_val + (minutes_val / 60), 2)
-        except Exception:
-            total_hours_calc = 0.0
-
-        # Prepare manpower data matching Procore's interface
-        manpower_data = {
-            "manpower_log": {
-                "company_id": company_id,
-                "workers": workers_count,
-                "hours": 10,  # hours per worker
-                "location": shift.job_site,
-                "comments": f"Daily workers: {workers_count} | Cumulative shifts: {cumulative_total} | Tot hrs: {total_hours_calc}",
-                "date": shift.clock_out.strftime("%Y-%m-%d")
-            }
-        }
-
-        # Send data to Procore
-        api_url = f"https://api.procore.com/rest/v1.0/projects/{project_id}/manpower_logs"
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-            "X-Procore-Company-Id": PROCORE_COMPANY_ID
-        }
-        response = requests.post(api_url, json=manpower_data, headers=headers)
-        if response.status_code >= 400:
-            print("Procore API error", response.status_code, response.text)
-        else:
-            print(f"Successfully synced manpower data to Procore for {shift.subcontractor}")
-
-    except requests.exceptions.RequestException as e:
-        print(f"Error syncing to Procore: {e}")
-    except (ValueError, IndexError, AttributeError) as e:
-        print(f"Error processing shift data: {e}")
+    # Procore integration disabled; nothing to do
+    return
 
 @app.route("/qr_clock_out", methods=["POST"])
 def qr_clock_out():
@@ -736,9 +619,6 @@ def qr_clock_out():
 
     # Update project history tracking
     update_subcontractor_history(shift)
-
-    # Sync to Procore if configured
-    sync_to_procore(shift)
 
     flash(
         f"Shift complete!<br>"
@@ -808,6 +688,16 @@ def check_tables():
         }
     except Exception as e:
         return f"Database error: {str(e)}"
+
+def build_project_history():
+    records = db.session.query(
+        Shift.subcontractor,
+        Shift.job_site,
+        func.min(Shift.clock_in).label('first_day'),
+        func.max(Shift.clock_out).label('last_day'),
+        func.count(Shift.id).label('manpower')
+    ).filter(Shift.clock_out.isnot(None)).group_by(Shift.subcontractor, Shift.job_site).all()
+    return records
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
