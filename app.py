@@ -11,6 +11,7 @@ import time
 from sqlalchemy import text
 import uuid
 from sqlalchemy import func
+import json
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your_secret_key')
@@ -495,29 +496,77 @@ def admin_delete_shift(shift_id):
     flash("Shift entry deleted.", "success")
     return redirect(url_for("admin_view"))
 
+QR_BATCH_FILE = "qr_batches.json"
+
+def load_qr_batches():
+    if os.path.exists(QR_BATCH_FILE):
+        with open(QR_BATCH_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_qr_batches(batches):
+    with open(QR_BATCH_FILE, "w") as f:
+        json.dump(batches, f)
+
 @app.route("/admin/qr_codes")
 def admin_qr_codes():
-    """Generate QR codes for all job sites with unique batch IDs"""
     if not session.get("admin_authenticated"):
         return redirect(url_for("admin_view"))
-    
     qr_codes = {}
     errors = []
-    batch_id = str(uuid.uuid4())  # Unique batch ID for this generation event
+    batches = load_qr_batches()
     for job_site in JOB_SITES:
-        try:
-            qr_image, timestamp, qr_url = generate_qr_code(job_site, batch_id)
-            qr_codes[job_site] = {
-                'image': qr_image,
-                'timestamp': timestamp,
-                'url': qr_url,
-                'batch_id': batch_id
-            }
-        except Exception as e:
-            errors.append(f"Error generating QR for {job_site}: {e}")
+        qr_codes[job_site] = {}
+        for action in ["clockin", "clockout"]:
+            key = f"{job_site}::{action}"
+            batch_id = batches.get(key)
+            if not batch_id:
+                batch_id = str(uuid.uuid4())
+                batches[key] = batch_id
+            try:
+                qr_image, timestamp, qr_url = generate_qr_code(job_site, batch_id, action=action)
+                qr_codes[job_site][action] = {
+                    'image': qr_image,
+                    'timestamp': timestamp,
+                    'url': qr_url,
+                    'batch_id': batch_id
+                }
+            except Exception as e:
+                errors.append(f"Error generating QR for {job_site} ({action}): {e}")
+    save_qr_batches(batches)
     if errors:
         flash("<br>".join(errors), "error")
     return render_template("qr_codes.html", qr_codes=qr_codes)
+
+@app.route("/admin/qr_codes/refresh/<job_site>/<action>")
+def refresh_qr_code(job_site, action):
+    if not session.get("admin_authenticated"):
+        return redirect(url_for("admin_view"))
+    batches = load_qr_batches()
+    key = f"{job_site}::{action}"
+    batch_id = str(uuid.uuid4())
+    batches[key] = batch_id
+    save_qr_batches(batches)
+    qr_image, timestamp, qr_url = generate_qr_code(job_site, batch_id, action=action)
+    return {
+        'image': qr_image,
+        'timestamp': timestamp,
+        'url': qr_url,
+        'batch_id': batch_id,
+        'action': action
+    }
+
+@app.route("/admin/qr_codes/refresh_all")
+def refresh_all_qr_codes():
+    if not session.get("admin_authenticated"):
+        return redirect(url_for("admin_view"))
+    batches = load_qr_batches()
+    for job_site in JOB_SITES:
+        for action in ["clockin", "clockout"]:
+            key = f"{job_site}::{action}"
+            batches[key] = str(uuid.uuid4())
+    save_qr_batches(batches)
+    return {"status": "ok"}
 
 @app.route("/initdb")
 def init_db():
@@ -528,14 +577,16 @@ def init_db():
     except Exception as e:
         return f"Error creating tables: {str(e)}"
 
-def generate_qr_code(job_site, batch_id, timestamp=None):
-    """Generate QR code for a job site with batch ID and timestamp validation"""
+def generate_qr_code(job_site, batch_id, timestamp=None, action="clockin"):
     if timestamp is None:
         timestamp = int(time.time())
     site_id = hashlib.md5(job_site.encode()).hexdigest()[:8]
     from flask import request
     host_url = request.host_url.rstrip('/')
-    qr_data = f"{host_url}/scan?site={site_id}&batch={batch_id}&t={timestamp}"
+    if action == "clockin":
+        qr_data = f"{host_url}/scan?site={site_id}&batch={batch_id}&t={timestamp}&action=clockin"
+    else:
+        qr_data = f"{host_url}/scan?site={site_id}&batch={batch_id}&t={timestamp}&action=clockout"
     qr_url = qr_data
     qr = qrcode.QRCode(version=1, box_size=10, border=5)
     qr.add_data(qr_data)
