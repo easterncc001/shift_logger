@@ -77,6 +77,17 @@
         .logout-btn:hover {
             background: #800;
         }
+        .qr-btn {
+            display:inline-block;
+            background:#17a2b8;
+            color:white;
+            text-decoration:none;
+            padding:10px 16px;
+            border-radius:6px;
+            font-size:0.9em;
+            margin:5px;
+        }
+        .qr-btn:hover{background:#138496;}
         .filter-section {
             margin: 20px 0;
             padding: 15px;
@@ -145,6 +156,7 @@
     <div class="data-container">
         <a href="{{ url_for('index') }}" class="back-btn">← Back to Shift Logger</a>
         <a href="{{ url_for('admin_logout') }}" class="logout-btn" style="float:right;">Logout</a>
+        <a href="{{ url_for('admin_qr_codes') }}" class="qr-btn">Manage QR Codes</a>
         <h1>Admin Data View</h1>
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}
@@ -188,7 +200,7 @@
                     <thead>
                         <tr>
                             <th>Subcontractor</th>
-                            <th>Total Days Worked</th>
+                            <th>Total Shifts Worked</th>
                             <th>Total Hours Worked</th>
                         </tr>
                     </thead>
@@ -222,13 +234,13 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for history in histories %}
+                        {% for h in histories %}
                         <tr>
-                            <td>{{ history.subcontractor }}</td>
-                            <td>{{ history.job_site }}</td>
-                            <td>{{ history.first_day.strftime('%Y-%m-%d') }}</td>
-                            <td>{{ history.last_day.strftime('%Y-%m-%d') }}</td>
-                            <td>{{ history.manpower }}</td>
+                            <td>{{ h.subcontractor }}</td>
+                            <td>{{ h.job_site }}</td>
+                            <td>{{ h.first_day.strftime('%Y-%m-%d') }}</td>
+                            <td>{{ h.last_day.strftime('%Y-%m-%d') }}</td>
+                            <td>{{ h.manpower }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
