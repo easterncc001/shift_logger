@@ -568,8 +568,9 @@ def qr_scan():
     job_site = get_job_site_from_id(site_id)
     if not job_site:
         return "Invalid job site.", 400
-    active_shifts = Shift.query.filter_by(job_site=job_site, qr_batch_id=batch_id, clock_out=None).all()
-    if not active_shifts:
+    any_shifts = Shift.query.filter_by(job_site=job_site, qr_batch_id=batch_id).count()
+    active_shifts = Shift.query.filter_by(job_site=job_site, qr_batch_id=batch_id, clock_out=None).count()
+    if any_shifts > 0 and active_shifts == 0:
         return "QR code expired. Please get a new QR code.", 400
     return render_template("qr_scan.html", job_site=job_site, batch_id=batch_id)
 
