@@ -18,12 +18,13 @@
             </ul>
           {% endif %}
         {% endwith %}
+        <h2>New Worker Clock In</h2>
         <form method="post">
             <div class="input-group">
-                <input type="text" name="name" placeholder="Your Name" required>
+                <input type="text" name="name" placeholder="Your Name">
             </div>
             <div class="input-group">
-                <input type="text" name="subcontractor" placeholder="Subcontractor Company" required list="subcontractor-list">
+                <input type="text" name="subcontractor" placeholder="Subcontractor Company" list="subcontractor-list">
                 <datalist id="subcontractor-list">
                     {% for subcontractor in subcontractors %}
                     <option value="{{ subcontractor }}">
@@ -53,6 +54,24 @@
             <div style="margin-top: 10px; color: #555; font-size: 0.95em;">
                 <b>Instructions:</b> Enter your code above to clock out, take a break, or resume.<br>
                 Use the top section to clock in for a new shift.
+            </div>
+        </form>
+        <hr style="margin:40px 0;">
+        <h2>Quick Clock In (existing code)</h2>
+        <form method="post">
+            <div class="input-group">
+                <input type="text" name="code" placeholder="Your 6-digit code" required>
+            </div>
+            <div class="input-group">
+                <select name="job_site" class="job-site-select" required>
+                    <option value="">Select Job Site</option>
+                    {% for site in job_sites %}
+                    <option value="{{ site }}">{{ site }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="actions">
+                <button type="submit" name="action" value="quickclockin">Clock In With Code</button>
             </div>
         </form>
         <div class="export-section" style="text-align: center;">
