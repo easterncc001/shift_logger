@@ -101,9 +101,10 @@ class Shift(db.Model):
 
 class Break(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    shift_code = db.Column(db.String(16), db.ForeignKey('shift.code'), nullable=False)
+    shift_code = db.Column(db.String(16), nullable=False)  # No longer a ForeignKey
     start = db.Column(db.DateTime, nullable=False)
     end = db.Column(db.DateTime)
+    # No foreign key constraint on shift_code
 
 class SubcontractorProjectHistory(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -833,26 +834,6 @@ def print_qr_code(job_site, action):
         return "QR code not found.", 404
     qr_image, timestamp, qr_url = generate_qr_code(job_site, batch_id, action=action)
     return render_template("print_qr.html", job_site=job_site, action=action, qr_image=qr_image, batch_id=batch_id)
-
-@app.route('/drop_shift_code_unique')
-def drop_shift_code_unique():
-    try:
-        db.session.execute('ALTER TABLE shift DROP CONSTRAINT shift_code_key CASCADE;')
-        db.session.commit()
-        return "Unique constraint on shift.code dropped with CASCADE!"
-    except Exception as e:
-        return f"Error: {e}"
-
-@app.route('/add_break_shift_code_fkey')
-def add_break_shift_code_fkey():
-    try:
-        db.session.execute(
-            'ALTER TABLE break ADD CONSTRAINT break_shift_code_fkey FOREIGN KEY (shift_code) REFERENCES shift(code);'
-        )
-        db.session.commit()
-        return "Foreign key from break.shift_code to shift.code added!"
-    except Exception as e:
-        return f"Error: {e}"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
