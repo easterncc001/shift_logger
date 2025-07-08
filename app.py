@@ -843,6 +843,17 @@ def drop_shift_code_unique():
     except Exception as e:
         return f"Error: {e}"
 
+@app.route('/add_break_shift_code_fkey')
+def add_break_shift_code_fkey():
+    try:
+        db.session.execute(
+            'ALTER TABLE break ADD CONSTRAINT break_shift_code_fkey FOREIGN KEY (shift_code) REFERENCES shift(code);'
+        )
+        db.session.commit()
+        return "Foreign key from break.shift_code to shift.code added!"
+    except Exception as e:
+        return f"Error: {e}"
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
