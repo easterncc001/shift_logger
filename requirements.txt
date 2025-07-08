@@ -8,3 +8,4 @@ qrcode==7.3
 Pillow==8.3.1
 requests==2.31.0
 Werkzeug==2.0.1
+flask_sqlalchemy
