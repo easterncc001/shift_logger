@@ -94,7 +94,7 @@ class Shift(db.Model):
     total_time = db.Column(db.String(32))
     working_time = db.Column(db.String(32))
     breaks = db.Column(db.String(255))
-    code = db.Column(db.String(16), unique=True, nullable=False)
+    code = db.Column(db.String(16), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     qr_batch_id = db.Column(db.String(64))  # New column for QR batch ID
     flagged = db.Column(db.Boolean, default=False)  # Auto-closed or problematic shift
@@ -833,6 +833,15 @@ def print_qr_code(job_site, action):
         return "QR code not found.", 404
     qr_image, timestamp, qr_url = generate_qr_code(job_site, batch_id, action=action)
     return render_template("print_qr.html", job_site=job_site, action=action, qr_image=qr_image, batch_id=batch_id)
+
+@app.route('/drop_shift_code_unique')
+def drop_shift_code_unique():
+    try:
+        db.session.execute('ALTER TABLE shift DROP CONSTRAINT shift_code_key;')
+        db.session.commit()
+        return "Unique constraint on shift.code dropped!"
+    except Exception as e:
+        return f"Error: {e}"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
