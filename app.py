@@ -837,9 +837,9 @@ def print_qr_code(job_site, action):
 @app.route('/drop_shift_code_unique')
 def drop_shift_code_unique():
     try:
-        db.session.execute('ALTER TABLE shift DROP CONSTRAINT shift_code_key;')
+        db.session.execute('ALTER TABLE shift DROP CONSTRAINT shift_code_key CASCADE;')
         db.session.commit()
-        return "Unique constraint on shift.code dropped!"
+        return "Unique constraint on shift.code dropped with CASCADE!"
     except Exception as e:
         return f"Error: {e}"
 
