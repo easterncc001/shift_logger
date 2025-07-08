@@ -114,6 +114,13 @@ class SubcontractorProjectHistory(db.Model):
     manpower = db.Column(db.Integer, default=0)
     __table_args__ = (db.UniqueConstraint('subcontractor', 'job_site', name='uix_subcontractor_jobsite'),)
 
+class WorkerCode(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    subcontractor = db.Column(db.String(120), nullable=False)
+    code = db.Column(db.String(16), unique=True, nullable=False)
+    __table_args__ = (db.UniqueConstraint('name', 'subcontractor', name='uix_worker_name_sub'),)
+
 JOB_SITES = list(JOB_SITE_TIMEZONES.keys())
 
 def generate_code():
@@ -126,14 +133,18 @@ def generate_code():
 
 def get_or_create_code(name: str, subcontractor: str) -> str:
     """Return existing persistent code for worker or create a new one."""
-    existing_shift = (
-        Shift.query.filter_by(name=name, subcontractor=subcontractor)
-        .order_by(Shift.id.asc())
-        .first()
-    )
-    if existing_shift:
-        return existing_shift.code
-    return generate_code()
+    worker = WorkerCode.query.filter_by(name=name, subcontractor=subcontractor).first()
+    if worker:
+        return worker.code
+    # Generate a new unique code
+    code = generate_code()
+    new_worker = WorkerCode(name=name, subcontractor=subcontractor, code=code)
+    db.session.add(new_worker)
+    db.session.commit()
+    return code
+
+def get_worker_by_code(code: str):
+    return WorkerCode.query.filter_by(code=code).first()
 
 def format_seconds(secs):
     hours = int(secs // 3600)
@@ -259,20 +270,20 @@ def index():
                 return redirect(url_for("index"))
 
             # find worker info
-            reference_shift = Shift.query.filter_by(code=input_code).first()
-            if not reference_shift:
+            worker = get_worker_by_code(input_code)
+            if not worker:
                 flash("Code not found. If you're a new worker please use the New Worker form.", "error")
                 return redirect(url_for("index"))
 
             # Check already clocked in at any job site
-            active = Shift.query.filter_by(name=reference_shift.name, subcontractor=reference_shift.subcontractor, clock_out=None).first()
+            active = Shift.query.filter_by(name=worker.name, subcontractor=worker.subcontractor, clock_out=None).first()
             if active:
                 flash(f"You are already clocked in at job site: {active.job_site}.", "error")
                 return redirect(url_for("index"))
 
             shift = Shift(
-                name=reference_shift.name,
-                subcontractor=reference_shift.subcontractor,
+                name=worker.name,
+                subcontractor=worker.subcontractor,
                 job_site=job_site,
                 clock_in=datetime.now(),
                 code=input_code,
