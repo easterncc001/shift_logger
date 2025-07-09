@@ -229,7 +229,7 @@ def index():
             if not input_code:
                 flash("Please enter your code to clock out.", "error")
                 return redirect(url_for("index"))
-            shift = Shift.query.filter_by(code=input_code).first()
+            shift = Shift.query.filter_by(code=input_code, clock_out=None).order_by(Shift.clock_in.desc()).first()
             if not shift:
                 flash("Code not found. Please check your code.", "error")
                 return redirect(url_for("index"))
