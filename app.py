@@ -831,7 +831,11 @@ def print_qr_code(job_site, action):
     key = f"{job_site}::{action}"
     batch_id = batches.get(key)
     if not batch_id:
-        return "QR code not found.", 404
+        # Generate a new batch ID if missing
+        import uuid
+        batch_id = str(uuid.uuid4())
+        batches[key] = batch_id
+        save_qr_batches(batches)
     qr_image, timestamp, qr_url = generate_qr_code(job_site, batch_id, action=action)
     return render_template("print_qr.html", job_site=job_site, action=action, qr_image=qr_image, batch_id=batch_id)
 
