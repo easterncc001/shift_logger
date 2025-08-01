@@ -20,19 +20,54 @@ app.secret_key = os.environ.get('SECRET_KEY', 'your_secret_key')
 DATABASE_URL = os.environ.get('DATABASE_URL')
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-elif not DATABASE_URL:
-    DATABASE_URL = 'sqlite:///shifts.db'
 
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+# Test PostgreSQL connection and fallback to SQLite if it fails
+def get_database_url():
+    if not DATABASE_URL:
+        print("No DATABASE_URL found, using SQLite")
+        return 'sqlite:///shifts.db'
+    
+    # Test if PostgreSQL is accessible
+    try:
+        import psycopg2
+        from urllib.parse import urlparse
+        parsed = urlparse(DATABASE_URL)
+        test_conn = psycopg2.connect(
+            host=parsed.hostname,
+            port=parsed.port,
+            database=parsed.path[1:],
+            user=parsed.username,
+            password=parsed.password,
+            connect_timeout=5
+        )
+        test_conn.close()
+        print(f"PostgreSQL connection successful to {parsed.hostname}")
+        return DATABASE_URL
+    except Exception as e:
+        print(f"PostgreSQL connection failed: {e}")
+        print("Falling back to SQLite database")
+        return 'sqlite:///shifts.db'
+
+# Set the database URL
+database_url = get_database_url()
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_pre_ping': True,
-    'pool_recycle': 300,
-    'connect_args': {
-        'connect_timeout': 10,
-        'application_name': 'shift_logger'
+
+# Only use PostgreSQL-specific options if we're actually using PostgreSQL
+if 'postgresql' in database_url:
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True,
+        'pool_recycle': 300,
+        'connect_args': {
+            'connect_timeout': 10,
+            'application_name': 'shift_logger'
+        }
     }
-}
+else:
+    # SQLite-specific options
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True
+    }
 
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', "EasternCC001")
 
@@ -43,9 +78,23 @@ def init_database():
     try:
         with app.app_context():
             db.create_all()
-            print("Database initialized successfully")
+            print(f"Database initialized successfully using: {app.config['SQLALCHEMY_DATABASE_URI']}")
     except Exception as e:
         print(f"Database initialization error: {e}")
+        # If PostgreSQL fails, try to switch to SQLite
+        if 'postgresql' in app.config['SQLALCHEMY_DATABASE_URI']:
+            print("Attempting to switch to SQLite...")
+            try:
+                app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///shifts.db'
+                app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}
+                # Recreate the engine
+                db.engine.dispose()
+                db.get_engine().dispose()
+                with app.app_context():
+                    db.create_all()
+                print("Successfully switched to SQLite database")
+            except Exception as sqlite_error:
+                print(f"Failed to switch to SQLite: {sqlite_error}")
         # Continue running even if database init fails
 
 init_database()
@@ -164,6 +213,80 @@ def format_seconds(secs):
     hours = int(secs // 3600)
     minutes = int((secs % 3600) // 60)
     return f"{hours}h {minutes}m"
+
+@app.route("/force-sqlite")
+def force_sqlite():
+    """Force the app to use SQLite database immediately"""
+    try:
+        # Update the database URI to SQLite
+        app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///shifts.db'
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}
+        
+        # Dispose of existing connections
+        db.engine.dispose()
+        db.get_engine().dispose()
+        
+        # Recreate the engine and initialize tables
+        with app.app_context():
+            db.create_all()
+        
+        return {
+            "status": "success",
+            "message": "Forced switch to SQLite database completed",
+            "database_url": app.config['SQLALCHEMY_DATABASE_URI'],
+            "note": "You may need to refresh the page for changes to take effect"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to force SQLite switch: {str(e)}"
+        }
+
+@app.route("/switch-to-sqlite")
+def switch_to_sqlite():
+    """Manually switch to SQLite database"""
+    try:
+        # Update the database URI to SQLite
+        app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///shifts.db'
+        
+        # Recreate the database engine
+        db.engine.dispose()
+        db.get_engine().dispose()
+        
+        # Initialize tables
+        with app.app_context():
+            db.create_all()
+        
+        return {
+            "status": "success",
+            "message": "Switched to SQLite database",
+            "database_url": app.config['SQLALCHEMY_DATABASE_URI']
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to switch to SQLite: {str(e)}"
+        }
+
+@app.route("/db-status")
+def db_status():
+    """Check database connection status"""
+    try:
+        # Test database connection
+        db.session.execute(text("SELECT 1"))
+        db.session.commit()
+        connection_status = "Connected"
+    except Exception as e:
+        connection_status = f"Error: {str(e)}"
+    
+    return {
+        "database_url": app.config['SQLALCHEMY_DATABASE_URI'].replace(
+            app.config['SQLALCHEMY_DATABASE_URI'].split('@')[0].split('://')[1] if '@' in app.config['SQLALCHEMY_DATABASE_URI'] else '',
+            '***'
+        ) if 'postgresql' in app.config['SQLALCHEMY_DATABASE_URI'] else app.config['SQLALCHEMY_DATABASE_URI'],
+        "connection_status": connection_status,
+        "database_type": "PostgreSQL" if "postgresql" in app.config['SQLALCHEMY_DATABASE_URI'] else "SQLite"
+    }
 
 @app.route("/health")
 def health_check():
