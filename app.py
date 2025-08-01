@@ -97,6 +97,26 @@ def init_database():
                 print(f"Failed to switch to SQLite: {sqlite_error}")
         # Continue running even if database init fails
 
+def ensure_tables_exist():
+    """Ensure database tables exist, create them if they don't"""
+    try:
+        with app.app_context():
+            # Check if tables exist by trying to query them
+            db.session.execute(text("SELECT 1 FROM shift LIMIT 1"))
+            db.session.commit()
+            print("Database tables already exist")
+        return True
+    except Exception as e:
+        print(f"Tables don't exist or error: {e}")
+        try:
+            with app.app_context():
+                db.create_all()
+                print("Database tables created successfully")
+            return True
+        except Exception as create_error:
+            print(f"Failed to create tables: {create_error}")
+            return False
+
 init_database()
 
 # Job site timezone mapping
@@ -213,6 +233,23 @@ def format_seconds(secs):
     hours = int(secs // 3600)
     minutes = int((secs % 3600) // 60)
     return f"{hours}h {minutes}m"
+
+@app.route("/create-tables")
+def create_tables():
+    """Manually create database tables"""
+    try:
+        with app.app_context():
+            db.create_all()
+        return {
+            "status": "success",
+            "message": "Database tables created successfully",
+            "database_url": app.config['SQLALCHEMY_DATABASE_URI']
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to create tables: {str(e)}"
+        }
 
 @app.route("/force-sqlite")
 def force_sqlite():
@@ -474,6 +511,10 @@ def index():
 def get_subcontractor_suggestions():
     """Get list of existing subcontractors for auto-suggestions"""
     try:
+        # Ensure tables exist before querying
+        if not ensure_tables_exist():
+            return []
+            
         subcontractors = [row[0] for row in db.session.query(Shift.subcontractor).distinct().all()]
         return [s for s in subcontractors if s]  # Filter out None/empty values
     except Exception as e:
@@ -953,6 +994,11 @@ def build_project_history(subcontractor=None, job_site=None):
 def close_overdue_shifts(max_hours: int = 24):
     """Auto-close any open shift older than max_hours and flag it."""
     try:
+        # Ensure tables exist before querying
+        if not ensure_tables_exist():
+            print("Cannot close overdue shifts - tables not available")
+            return
+            
         cutoff = datetime.utcnow() - timedelta(hours=max_hours)
         overdue_shifts = Shift.query.filter(Shift.clock_out.is_(None), Shift.clock_in < cutoff).all()
         for s in overdue_shifts:
