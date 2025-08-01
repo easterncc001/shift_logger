@@ -532,7 +532,14 @@ def index():
             flash("Invalid action or state.", "error")
             return redirect(url_for("index"))
 
-    return render_template("index.html", job_sites=JOB_SITES, subcontractors=get_subcontractor_suggestions())
+    # Get subcontractor suggestions with error handling
+    try:
+        subcontractors = get_subcontractor_suggestions()
+    except Exception as e:
+        print(f"Error getting subcontractor suggestions in index: {e}")
+        subcontractors = []
+
+    return render_template("index.html", job_sites=JOB_SITES, subcontractors=subcontractors)
 
 def get_subcontractor_suggestions():
     """Get list of existing subcontractors for auto-suggestions"""
