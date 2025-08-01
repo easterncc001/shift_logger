@@ -97,6 +97,14 @@ def init_database():
                 print(f"Failed to switch to SQLite: {sqlite_error}")
         # Continue running even if database init fails
 
+def cleanup_db_session():
+    """Clean up database session to prevent binding errors"""
+    try:
+        db.session.remove()
+        db.session.close()
+    except Exception as e:
+        print(f"Error cleaning up session: {e}")
+
 def ensure_tables_exist():
     """Ensure database tables exist, create them if they don't"""
     try:
@@ -233,6 +241,24 @@ def format_seconds(secs):
     hours = int(secs // 3600)
     minutes = int((secs % 3600) // 60)
     return f"{hours}h {minutes}m"
+
+@app.route("/reset-session")
+def reset_session():
+    """Reset database session to fix binding issues"""
+    try:
+        cleanup_db_session()
+        # Ensure tables exist after session reset
+        ensure_tables_exist()
+        return {
+            "status": "success",
+            "message": "Database session reset successfully",
+            "database_url": app.config['SQLALCHEMY_DATABASE_URI']
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to reset session: {str(e)}"
+        }
 
 @app.route("/create-tables")
 def create_tables():
@@ -535,26 +561,50 @@ def admin_view():
             else:
                 return render_template("admin_login.html")
         
+        # Ensure tables exist before querying
+        if not ensure_tables_exist():
+            flash("Database tables are not available. Please try again later.", "error")
+            return render_template("admin_login.html")
+        
         subcontractor_filter = request.args.get('subcontractor', '')
         job_site_filter = request.args.get('job_site', '')
         
-        # Get shifts
-        query = Shift.query
-        if subcontractor_filter:
-            query = query.filter_by(subcontractor=subcontractor_filter)
-        if job_site_filter:
-            query = query.filter_by(job_site=job_site_filter)
-        shifts = query.order_by(Shift.created_at.desc()).all()
+        # Get shifts with error handling
+        try:
+            query = Shift.query
+            if subcontractor_filter:
+                query = query.filter_by(subcontractor=subcontractor_filter)
+            if job_site_filter:
+                query = query.filter_by(job_site=job_site_filter)
+            shifts = query.order_by(Shift.created_at.desc()).all()
+        except Exception as e:
+            print(f"Error querying shifts: {e}")
+            shifts = []
+            flash("Error loading shift data. Please try again.", "error")
         
         # Get project history and summary with filters
-        histories = build_project_history(subcontractor=subcontractor_filter or None, job_site=job_site_filter or None)
-        subcontractor_stats = calculate_subcontractor_days(subcontractor=subcontractor_filter or None, job_site=job_site_filter or None)
+        try:
+            histories = build_project_history(subcontractor=subcontractor_filter or None, job_site=job_site_filter or None)
+            subcontractor_stats = calculate_subcontractor_days(subcontractor=subcontractor_filter or None, job_site=job_site_filter or None)
+        except Exception as e:
+            print(f"Error loading project history: {e}")
+            histories = []
+            subcontractor_stats = {}
+            flash("Error loading project history. Please try again.", "error")
         
         # Get unique subcontractors and job sites for filters
-        subcontractors = [row[0] for row in db.session.query(Shift.subcontractor).distinct().all()]
-        job_sites = [row[0] for row in db.session.query(Shift.job_site).distinct().all()]
+        try:
+            subcontractors = [row[0] for row in db.session.query(Shift.subcontractor).distinct().all()]
+            job_sites = [row[0] for row in db.session.query(Shift.job_site).distinct().all()]
+        except Exception as e:
+            print(f"Error loading filter options: {e}")
+            subcontractors = []
+            job_sites = []
         
-        close_overdue_shifts()
+        try:
+            close_overdue_shifts()
+        except Exception as e:
+            print(f"Error closing overdue shifts in admin: {e}")
         
         return render_template(
             "admin.html", 
@@ -568,7 +618,8 @@ def admin_view():
             format_time_for_display=format_time_for_display
         )
     except Exception as e:
-        flash(f"Admin view error: {e}", "error")
+        print(f"Admin view error: {e}")
+        flash(f"Admin view error: {str(e)}", "error")
         return render_template("admin_login.html")
 
 def calculate_subcontractor_days(subcontractor=None, job_site=None):
