@@ -25,17 +25,30 @@ elif not DATABASE_URL:
 
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_pre_ping': True,
+    'pool_recycle': 300,
+    'connect_args': {
+        'connect_timeout': 10,
+        'application_name': 'shift_logger'
+    }
+}
 
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', "EasternCC001")
 
 db = SQLAlchemy(app)
 
 # Initialize database tables with error handling
-try:
-    with app.app_context():
-        db.create_all()
-except Exception as e:
-    print(f"Database initialization error: {e}")
+def init_database():
+    try:
+        with app.app_context():
+            db.create_all()
+            print("Database initialized successfully")
+    except Exception as e:
+        print(f"Database initialization error: {e}")
+        # Continue running even if database init fails
+
+init_database()
 
 # Job site timezone mapping
 JOB_SITE_TIMEZONES = {
@@ -152,147 +165,182 @@ def format_seconds(secs):
     minutes = int((secs % 3600) // 60)
     return f"{hours}h {minutes}m"
 
+@app.route("/health")
+def health_check():
+    """Simple health check endpoint that doesn't require database access"""
+    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+
 @app.route("/", methods=["GET", "POST"])
 def index():
-    close_overdue_shifts()
+    try:
+        close_overdue_shifts()
+    except Exception as e:
+        print(f"Error in close_overdue_shifts: {e}")
+        # Continue running even if database operations fail
+    
     if request.method == "POST":
         action = request.form.get("action")
         now = datetime.now()
 
         if action == "clockin":
-            name = request.form.get("name", "").strip()
-            subcontractor = request.form.get("subcontractor", "").strip()
-            job_site = request.form.get("job_site", "")
-            
-            if not name:
-                flash("Please enter your name.", "error")
+            try:
+                name = request.form.get("name", "").strip()
+                subcontractor = request.form.get("subcontractor", "").strip()
+                job_site = request.form.get("job_site", "")
+                
+                if not name:
+                    flash("Please enter your name.", "error")
+                    return redirect(url_for("index"))
+                if not subcontractor:
+                    flash("Please enter your subcontractor company.", "error")
+                    return redirect(url_for("index"))
+                if not job_site:
+                    flash("Please select a job site.", "error")
+                    return redirect(url_for("index"))
+                
+                # Check if already clocked in at any job site
+                existing_shift = Shift.query.filter_by(name=name, subcontractor=subcontractor, clock_out=None).first()
+                if existing_shift:
+                    flash(f"You are already clocked in at job site: {existing_shift.job_site}.", "error")
+                    return redirect(url_for("index"))
+                
+                code = get_or_create_code(name, subcontractor)
+                shift = Shift(name=name, subcontractor=subcontractor, job_site=job_site, clock_in=now, code=code)
+                db.session.add(shift)
+                db.session.commit()
+                flash(
+                    f"Your code is: <b>{code}</b><br>"
+                    f"<span style='color:red;'>This code is required to clock out. Please write it down or remember it. It will not be shown again!</span>",
+                    "success"
+                )
                 return redirect(url_for("index"))
-            if not subcontractor:
-                flash("Please enter your subcontractor company.", "error")
+            except Exception as e:
+                print(f"Error in clockin: {e}")
+                flash("Database error. Please try again later.", "error")
                 return redirect(url_for("index"))
-            if not job_site:
-                flash("Please select a job site.", "error")
-                return redirect(url_for("index"))
-            
-            # Check if already clocked in at any job site
-            existing_shift = Shift.query.filter_by(name=name, subcontractor=subcontractor, clock_out=None).first()
-            if existing_shift:
-                flash(f"You are already clocked in at job site: {existing_shift.job_site}.", "error")
-                return redirect(url_for("index"))
-            
-            code = get_or_create_code(name, subcontractor)
-            shift = Shift(name=name, subcontractor=subcontractor, job_site=job_site, clock_in=now, code=code)
-            db.session.add(shift)
-            db.session.commit()
-            flash(
-                f"Your code is: <b>{code}</b><br>"
-                f"<span style='color:red;'>This code is required to clock out. Please write it down or remember it. It will not be shown again!</span>",
-                "success"
-            )
-            return redirect(url_for("index"))
 
         elif action == "break":
-            input_code = request.form.get("input_code")
-            if not input_code:
-                flash("Please enter your code to start a break.", "error")
+            try:
+                input_code = request.form.get("input_code")
+                if not input_code:
+                    flash("Please enter your code to start a break.", "error")
+                    return redirect(url_for("index"))
+                shift = Shift.query.filter_by(code=input_code).first()
+                if not shift:
+                    flash("Code not found.", "error")
+                    return redirect(url_for("index"))
+                last_break = Break.query.filter_by(shift_code=input_code).order_by(Break.id.desc()).first()
+                if not last_break or last_break.end is not None:
+                    new_break = Break(shift_code=input_code, start=now)
+                    db.session.add(new_break)
+                    db.session.commit()
+                    flash("Break started.", "success")
+                else:
+                    flash("You are already on a break.", "error")
                 return redirect(url_for("index"))
-            shift = Shift.query.filter_by(code=input_code).first()
-            if not shift:
-                flash("Code not found.", "error")
+            except Exception as e:
+                print(f"Error in break: {e}")
+                flash("Database error. Please try again later.", "error")
                 return redirect(url_for("index"))
-            last_break = Break.query.filter_by(shift_code=input_code).order_by(Break.id.desc()).first()
-            if not last_break or last_break.end is not None:
-                new_break = Break(shift_code=input_code, start=now)
-                db.session.add(new_break)
-                db.session.commit()
-                flash("Break started.", "success")
-            else:
-                flash("You are already on a break.", "error")
-            return redirect(url_for("index"))
 
         elif action == "resume":
-            input_code = request.form.get("input_code")
-            if not input_code:
-                flash("Please enter your code to resume.", "error")
-                return redirect(url_for("index"))
-            last_break = Break.query.filter_by(shift_code=input_code).order_by(Break.id.desc()).first()
-            if last_break and last_break.end is None:
-                last_break.end = now
-                db.session.commit()
-                flash("Break ended.", "success")
-            else:
-                flash("No break to resume.", "error")
+            try:
+                input_code = request.form.get("input_code")
+                if not input_code:
+                    flash("Please enter your code to resume.", "error")
+                    return redirect(url_for("index"))
+                last_break = Break.query.filter_by(shift_code=input_code).order_by(Break.id.desc()).first()
+                if last_break and last_break.end is None:
+                    last_break.end = now
+                    db.session.commit()
+                    flash("Break ended.", "success")
+                else:
+                    flash("No break to resume.", "error")
+                    return redirect(url_for("index"))
+            except Exception as e:
+                print(f"Error in resume: {e}")
+                flash("Database error. Please try again later.", "error")
                 return redirect(url_for("index"))
 
         elif action == "clockout":
-            input_code = request.form.get("input_code")
-            if not input_code:
-                flash("Please enter your code to clock out.", "error")
-                return redirect(url_for("index"))
-            shift = Shift.query.filter_by(code=input_code, clock_out=None).order_by(Shift.clock_in.desc()).first()
-            if not shift:
-                flash("Code not found. Please check your code.", "error")
-                return redirect(url_for("index"))
-            if shift.clock_out:
-                flash("You have already clocked out for this shift.", "error")
-                return redirect(url_for("index"))
-            clock_in_dt = shift.clock_in
-            clock_out_dt = now
-            total_time = clock_out_dt - clock_in_dt
-            breaks = Break.query.filter_by(shift_code=input_code).all()
-            total_break = 0
-            breaks_str = ""
-            if breaks:
-                for b in breaks:
-                    if b.start and b.end:
-                        total_break += (b.end - b.start).total_seconds()
-                breaks_str = "; ".join(
-                    f"{b.start.strftime('%I:%M %p')} - {b.end.strftime('%I:%M %p')}" for b in breaks if b.start and b.end
+            try:
+                input_code = request.form.get("input_code")
+                if not input_code:
+                    flash("Please enter your code to clock out.", "error")
+                    return redirect(url_for("index"))
+                shift = Shift.query.filter_by(code=input_code, clock_out=None).order_by(Shift.clock_in.desc()).first()
+                if not shift:
+                    flash("Code not found. Please check your code.", "error")
+                    return redirect(url_for("index"))
+                if shift.clock_out:
+                    flash("You have already clocked out for this shift.", "error")
+                    return redirect(url_for("index"))
+                clock_in_dt = shift.clock_in
+                clock_out_dt = now
+                total_time = clock_out_dt - clock_in_dt
+                breaks = Break.query.filter_by(shift_code=input_code).all()
+                total_break = 0
+                breaks_str = ""
+                if breaks:
+                    for b in breaks:
+                        if b.start and b.end:
+                            total_break += (b.end - b.start).total_seconds()
+                    breaks_str = "; ".join(
+                        f"{b.start.strftime('%I:%M %p')} - {b.end.strftime('%I:%M %p')}" for b in breaks if b.start and b.end
+                    )
+                working_time = total_time.total_seconds() - total_break
+                shift.clock_out = clock_out_dt
+                shift.total_time = format_seconds(total_time.total_seconds())
+                shift.working_time = format_seconds(working_time)
+                shift.breaks = breaks_str
+                db.session.commit()
+                flash(
+                    f"Shift complete!<br>"
+                    f"Total time: <b>{format_seconds(total_time.total_seconds())}</b><br>"
+                    f"Actual working time: <b>{format_seconds(working_time)}</b>",
+                    "success"
                 )
-            working_time = total_time.total_seconds() - total_break
-            shift.clock_out = clock_out_dt
-            shift.total_time = format_seconds(total_time.total_seconds())
-            shift.working_time = format_seconds(working_time)
-            shift.breaks = breaks_str
-            db.session.commit()
-            flash(
-                f"Shift complete!<br>"
-                f"Total time: <b>{format_seconds(total_time.total_seconds())}</b><br>"
-                f"Actual working time: <b>{format_seconds(working_time)}</b>",
-                "success"
-            )
-            return redirect(url_for("index"))
+                return redirect(url_for("index"))
+            except Exception as e:
+                print(f"Error in clockout: {e}")
+                flash("Database error. Please try again later.", "error")
+                return redirect(url_for("index"))
 
         elif action == "quickclockin":
-            input_code = request.form.get("code", "").strip()
-            job_site = request.form.get("job_site", "")
-            if not input_code or not job_site:
-                flash("Please enter your code and select a job site.", "error")
-                return redirect(url_for("index"))
+            try:
+                input_code = request.form.get("code", "").strip()
+                job_site = request.form.get("job_site", "")
+                if not input_code or not job_site:
+                    flash("Please enter your code and select a job site.", "error")
+                    return redirect(url_for("index"))
 
-            # find worker info
-            worker = get_worker_by_code(input_code)
-            if not worker:
-                flash("Code not found. If you're a new worker please use the New Worker form.", "error")
-                return redirect(url_for("index"))
+                # find worker info
+                worker = get_worker_by_code(input_code)
+                if not worker:
+                    flash("Code not found. If you're a new worker please use the New Worker form.", "error")
+                    return redirect(url_for("index"))
 
-            # Check already clocked in at any job site
-            active = Shift.query.filter_by(name=worker.name, subcontractor=worker.subcontractor, clock_out=None).first()
-            if active:
-                flash(f"You are already clocked in at job site: {active.job_site}.", "error")
-                return redirect(url_for("index"))
+                # Check already clocked in at any job site
+                active = Shift.query.filter_by(name=worker.name, subcontractor=worker.subcontractor, clock_out=None).first()
+                if active:
+                    flash(f"You are already clocked in at job site: {active.job_site}.", "error")
+                    return redirect(url_for("index"))
 
-            shift = Shift(
-                name=worker.name,
-                subcontractor=worker.subcontractor,
-                job_site=job_site,
-                clock_in=datetime.now(),
-                code=input_code,
-            )
-            db.session.add(shift)
-            db.session.commit()
-            flash("Clock-in successful!", "success")
-            return redirect(url_for("index"))
+                shift = Shift(
+                    name=worker.name,
+                    subcontractor=worker.subcontractor,
+                    job_site=job_site,
+                    clock_in=datetime.now(),
+                    code=input_code,
+                )
+                db.session.add(shift)
+                db.session.commit()
+                flash("Clock-in successful!", "success")
+                return redirect(url_for("index"))
+            except Exception as e:
+                print(f"Error in quickclockin: {e}")
+                flash("Database error. Please try again later.", "error")
+                return redirect(url_for("index"))
 
         else:
             flash("Invalid action or state.", "error")
@@ -305,7 +353,8 @@ def get_subcontractor_suggestions():
     try:
         subcontractors = [row[0] for row in db.session.query(Shift.subcontractor).distinct().all()]
         return [s for s in subcontractors if s]  # Filter out None/empty values
-    except Exception:
+    except Exception as e:
+        print(f"Error getting subcontractor suggestions: {e}")
         return []
 
 @app.route("/admin", methods=["GET", "POST"])
@@ -780,16 +829,21 @@ def build_project_history(subcontractor=None, job_site=None):
 
 def close_overdue_shifts(max_hours: int = 24):
     """Auto-close any open shift older than max_hours and flag it."""
-    cutoff = datetime.utcnow() - timedelta(hours=max_hours)
-    overdue_shifts = Shift.query.filter(Shift.clock_out.is_(None), Shift.clock_in < cutoff).all()
-    for s in overdue_shifts:
-        s.clock_out = s.clock_in + timedelta(hours=max_hours)
-        s.total_time = format_seconds(max_hours * 3600)
-        s.working_time = s.total_time
-        s.breaks = "AUTO-CLOSED"
-        s.flagged = True
-    if overdue_shifts:
-        db.session.commit()
+    try:
+        cutoff = datetime.utcnow() - timedelta(hours=max_hours)
+        overdue_shifts = Shift.query.filter(Shift.clock_out.is_(None), Shift.clock_in < cutoff).all()
+        for s in overdue_shifts:
+            s.clock_out = s.clock_in + timedelta(hours=max_hours)
+            s.total_time = format_seconds(max_hours * 3600)
+            s.working_time = s.total_time
+            s.breaks = "AUTO-CLOSED"
+            s.flagged = True
+        if overdue_shifts:
+            db.session.commit()
+    except Exception as e:
+        print(f"Error closing overdue shifts: {e}")
+        # Don't crash the app if database is unavailable
+        pass
 
 @app.route('/add_flagged_column')
 def add_flagged_column():
