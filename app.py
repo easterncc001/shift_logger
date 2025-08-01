@@ -569,14 +569,33 @@ def admin_view():
         subcontractor_filter = request.args.get('subcontractor', '')
         job_site_filter = request.args.get('job_site', '')
         
-        # Get shifts with error handling
+        # Get shifts with error handling and convert to dicts
         try:
             query = Shift.query
             if subcontractor_filter:
                 query = query.filter_by(subcontractor=subcontractor_filter)
             if job_site_filter:
                 query = query.filter_by(job_site=job_site_filter)
-            shifts = query.order_by(Shift.created_at.desc()).all()
+            shift_objects = query.order_by(Shift.created_at.desc()).all()
+            
+            # Convert to dictionaries to avoid session binding issues
+            shifts = []
+            for s in shift_objects:
+                shifts.append({
+                    "id": s.id,
+                    "name": s.name,
+                    "subcontractor": s.subcontractor,
+                    "job_site": s.job_site,
+                    "clock_in": s.clock_in,
+                    "clock_out": s.clock_out,
+                    "total_time": s.total_time,
+                    "working_time": s.working_time,
+                    "breaks": s.breaks,
+                    "code": s.code,
+                    "created_at": s.created_at,
+                    "qr_batch_id": s.qr_batch_id,
+                    "flagged": s.flagged,
+                })
         except Exception as e:
             print(f"Error querying shifts: {e}")
             shifts = []
@@ -584,8 +603,19 @@ def admin_view():
         
         # Get project history and summary with filters
         try:
-            histories = build_project_history(subcontractor=subcontractor_filter or None, job_site=job_site_filter or None)
+            history_objects = build_project_history(subcontractor=subcontractor_filter or None, job_site=job_site_filter or None)
             subcontractor_stats = calculate_subcontractor_days(subcontractor=subcontractor_filter or None, job_site=job_site_filter or None)
+            
+            # Convert history objects to dictionaries (these are SQLAlchemy result objects)
+            histories = []
+            for h in history_objects:
+                histories.append({
+                    "subcontractor": h.subcontractor,
+                    "job_site": h.job_site,
+                    "first_day": h.first_day,
+                    "last_day": h.last_day,
+                    "manpower": h.manpower,
+                })
         except Exception as e:
             print(f"Error loading project history: {e}")
             histories = []
